@@ -179,6 +179,8 @@ Part of the Q...Z toolset, all of it designing for the failure that does not ann
   re-running the same configuration does not buy another.
 - QUEUEZ, this one: ordering a feed by its sequence, because on a real recorded session the
   clock goes backwards.
+- [QUANDARYZ](https://github.com/PNX89/QUANDARYZ), counting the distinct screens a component can
+  settle into when its responses arrive out of order.
 
 **On QUARRYZ.** QUARRYZ asks when a publisher changed a number and keeps every version of it.
 This repository asks a narrower question about the same kind of stream: whether what arrived is
