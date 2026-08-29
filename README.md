@@ -181,6 +181,8 @@ Part of the Q...Z toolset, all of it designing for the failure that does not ann
   clock goes backwards.
 - [QUANDARYZ](https://github.com/PNX89/QUANDARYZ), counting the distinct screens a component can
   settle into when its responses arrive out of order.
+- [QUIETZ](https://github.com/PNX89/QUIETZ), watching whether the data arrived rather than
+  whether the server answered.
 
 **On QUARRYZ.** QUARRYZ asks when a publisher changed a number and keeps every version of it.
 This repository asks a narrower question about the same kind of stream: whether what arrived is
