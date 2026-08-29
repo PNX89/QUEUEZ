@@ -33,7 +33,7 @@ def recorded() -> list[session.Event]:
     return session.by_topic(session.read("session_one"))[TOPIC]
 
 
-def totals(connection: sqlite3.Connection) -> int:
+def totals_of(connection: sqlite3.Connection) -> int:
     return int(connection.execute("select sum(events) from bar").fetchone()[0] or 0)
 
 
@@ -85,7 +85,7 @@ def test_a_resent_window_does_not_double_the_totals(
     built, injected = tape.build(recorded)
     outcome = consumer.consume(sink, built)
     assert outcome.ignored_as_duplicate == len(injected.resent_offsets)
-    assert totals(sink) == outcome.applied + outcome.applied_as_correction
+    assert totals_of(sink) == outcome.applied + outcome.applied_as_correction
 
 
 def test_a_correction_is_applied_and_a_duplicate_is_not(
@@ -144,7 +144,7 @@ def test_killing_the_consumer_between_writes_costs_nothing(
     uninterrupted.executescript(consumer.SCHEMA_SQL)
     try:
         consumer.consume(uninterrupted, built)
-        expected = totals(uninterrupted)
+        expected = totals_of(uninterrupted)
     finally:
         uninterrupted.close()
 
@@ -158,8 +158,8 @@ def test_killing_the_consumer_between_writes_costs_nothing(
     replayed = [event for event in built if event.offset > resume_from - 100]
     consumer.consume(sink, replayed)
 
-    assert totals(sink) == expected, (
-        f"the interrupted run produced {totals(sink)} and the uninterrupted one {expected}, so "
+    assert totals_of(sink) == expected, (
+        f"the interrupted run produced {totals_of(sink)} and the uninterrupted one {expected}, so "
         f"the replay was counted twice"
     )
 
@@ -244,3 +244,41 @@ def test_the_offset_column_can_hold_the_offsets_this_feed_actually_uses() -> Non
         f"the largest offset in the committed session is {largest}, which now fits in a "
         f"four-byte integer, so this test no longer demonstrates anything"
     )
+
+
+def test_replaying_the_whole_tape_a_third_time_changes_nothing(
+    sink: sqlite3.Connection, recorded: list[session.Event]
+) -> None:
+    """THE TEST THAT FOUND THE REAL DEFECT, and it found it in the PostgreSQL leg first.
+
+    The offline replay test above replays a SUFFIX, which is what a broker does after a crash,
+    and that passed against a consumer that was not idempotent at all. Replaying the whole tape
+    is the harder question and at-least-once delivery makes it a real one.
+
+    What it caught: storing one fingerprint per offset and overwriting it on a correction
+    oscillates. On the second pass the ORIGINAL arrives, differs from the stored correction, and
+    is applied as a correction of it; then the correction arrives, differs again, and is applied
+    too. Every full replay added two folds, for ever.
+    """
+    built, _ = tape.build(recorded)
+    totals = []
+    for _ in range(3):
+        consumer.consume(sink, built)
+        totals.append(totals_of(sink))
+    assert len(set(totals)) == 1, (
+        f"three full passes gave {totals}, so the consumer is not idempotent over the whole tape "
+        f"and a broker replaying from behind would inflate the sink"
+    )
+
+
+def test_a_replay_reports_everything_as_a_duplicate_and_nothing_as_a_correction(
+    sink: sqlite3.Connection, recorded: list[session.Event]
+) -> None:
+    """The counts, not just the totals. A pass that applied nothing but called it a correction
+    would leave the sink right and the ledger wrong."""
+    built, _ = tape.build(recorded)
+    consumer.consume(sink, built)
+    second = consumer.consume(sink, built)
+    assert second.applied == 0
+    assert second.applied_as_correction == 0
+    assert second.ignored_as_duplicate == len(built)
