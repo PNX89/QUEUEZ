@@ -163,3 +163,23 @@ jobs:
           git status --porcelain docs/evidence/cache
           git diff --exit-code -- docs/evidence/cache
           test -z "$(git status --porcelain docs/evidence/cache)"
+
+  # The demo, which runs on a clone with nothing installed because the consumer's rules are
+  # exercised against SQLite and a committed session. Its captured output is what the card shows.
+  demo:
+    name: the demo a reader can run with nothing installed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: run the demo exactly as the README tells a reader to
+        run: uv run python examples/the_clock_goes_backwards.py
+      - name: capture what it printed
+        run: uv run python scripts/capture_evidence.py
+      - name: fail if the captured output has changed
+        run: |
+          git status --porcelain docs/evidence/demo.txt
+          git diff --exit-code -- docs/evidence/demo.txt
+          test -z "$(git status --porcelain docs/evidence/demo.txt)"
