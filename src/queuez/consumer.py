@@ -42,7 +42,18 @@ create table if not exists applied (
     -- against and wrong in the one you deploy to is the reason this leg exists.
     offset_seen bigint not null,
     fingerprint text not null,
-    primary key (topic, offset_seen)
+    -- THE FINGERPRINT IS PART OF THE KEY, AND KEEPING IT OUT WAS A REAL DEFECT.
+    --
+    -- The first version stored one row per offset and overwrote the fingerprint when a
+    -- correction arrived. That is not idempotent under replay, which at-least-once delivery
+    -- guarantees will happen: on a second pass the ORIGINAL arrives, differs from the stored
+    -- correction, and is applied as a correction of it; then the correction arrives, differs
+    -- again, and is applied too. Every full replay added two folds, for ever, oscillating.
+    --
+    -- Recording every distinct content seen for an offset fixes it by construction. A
+    -- fingerprint already present is a redelivery whatever order it arrives in, and a
+    -- fingerprint never seen is a restatement. Replay is then free.
+    primary key (topic, offset_seen, fingerprint)
 );
 """
 
@@ -93,15 +104,22 @@ def consume(connection: Any, events: Iterable[Event], *, stop_after: int | None 
         if stop_after is not None and index >= stop_after:
             break
 
-        seen = connection.execute(
-            "select fingerprint from applied where topic = ? and offset_seen = ?",
-            (event.topic, event.offset),
-        ).fetchone()
         current = fingerprint(event)
-
-        if seen is not None and seen[0] == current:
+        already = connection.execute(
+            "select 1 from applied where topic = ? and offset_seen = ? and fingerprint = ?",
+            (event.topic, event.offset, current),
+        ).fetchone()
+        if already is not None:
             outcome.ignored_as_duplicate += 1
             continue
+
+        # A different content for an offset already applied is a restatement rather than a
+        # redelivery. This is read BEFORE the write below, so the count is of what arrived
+        # rather than of what the table happens to hold afterwards.
+        seen_before = connection.execute(
+            "select 1 from applied where topic = ? and offset_seen = ?",
+            (event.topic, event.offset),
+        ).fetchone()
 
         # ONE TRANSACTION, TWO WRITES. The fold and the record of having folded it are the same
         # commit, so no crash can separate them.
@@ -117,7 +135,7 @@ def consume(connection: Any, events: Iterable[Event], *, stop_after: int | None 
             connection.execute(
                 """
                 insert into applied (topic, offset_seen, fingerprint) values (?, ?, ?)
-                on conflict (topic, offset_seen) do update set fingerprint = excluded.fingerprint
+                on conflict (topic, offset_seen, fingerprint) do nothing
                 """,
                 (event.topic, event.offset, current),
             )
@@ -126,7 +144,7 @@ def consume(connection: Any, events: Iterable[Event], *, stop_after: int | None 
             connection.execute("rollback")
             raise
 
-        if seen is not None:
+        if seen_before is not None:
             outcome.applied_as_correction += 1
         else:
             outcome.applied += 1
