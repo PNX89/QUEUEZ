@@ -1,0 +1,7 @@
+{
+  "callers": 24,
+  "recomputed_without_single_flight": 24,
+  "recomputed_with_single_flight": 1,
+  "default_maxmemory_policy": "noeviction",
+  "write_refused_under_noeviction": "OutOfMemoryError"
+}
