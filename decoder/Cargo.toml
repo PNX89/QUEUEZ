@@ -1,0 +1,14 @@
+[package]
+name = "queuez-decoder"
+version = "0.1.0"
+edition = "2021"
+description = "The same normalisation as the Python reader, written once more in another language"
+
+# NO DEPENDENCIES, AND THAT IS THE POINT. The decoder reads a CSV of ten columns and emits a
+# normalised line per event. Pulling in a CSV crate and a serialisation crate would make this a
+# demonstration of somebody else's library rather than of the language, and the conformance
+# suite would then be comparing two wrappers.
+[dependencies]
+
+[profile.release]
+opt-level = 3

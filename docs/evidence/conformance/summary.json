@@ -1,0 +1,7 @@
+{
+  "events": 2027,
+  "identical": true,
+  "python_seconds": 0.004,
+  "rust_seconds": 0.0017,
+  "note": "One file, read once, on one machine. Published because the question is asked, not because it decides anything, and representative of nothing."
+}

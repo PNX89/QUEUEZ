@@ -1,0 +1,11 @@
+$ uv run python scripts/measure_conformance.py
+
+2027 events, normalised twice, compared line by line.
+  identical: yes
+
+Neither implementation is the reference. They agree, or this fails and says
+which line. The timing below is one file on one machine and is representative
+of nothing at all.
+
+  python  0.0040s
+  rust    0.0017s   (including process start)

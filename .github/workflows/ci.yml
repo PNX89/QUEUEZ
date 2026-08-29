@@ -98,3 +98,38 @@ jobs:
           enable-cache: true
       - name: run the consumer against PostgreSQL
         run: uv run --group broker pytest tests_broker -q
+
+  # The same normalisation, written twice, compared line by line. A specification with one
+  # implementation is a specification nobody has read.
+  #
+  # The evidence carries a timing, so this job REGENERATES it and diffs only the summary's
+  # `identical` flag rather than the whole file: a wall-clock figure differs on every runner,
+  # and a diff that fails for that reason is a diff people learn to ignore.
+  conformance:
+    name: the same normalisation, written twice
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: build the decoder
+        run: cargo build --release --manifest-path decoder/Cargo.toml
+      - name: run both and compare them line by line
+        run: uv run python scripts/measure_conformance.py
+      - name: fail if they stopped agreeing or the event count moved
+        run: |
+          # The two things that are not a timing. If either changes, the exhibit has changed.
+          uv run python -c "
+          import json, pathlib, sys
+          found = json.loads(pathlib.Path('docs/evidence/conformance/summary.json').read_text())
+          committed = json.loads(
+              __import__('subprocess').run(
+                  ['git', 'show', 'HEAD:docs/evidence/conformance/summary.json'],
+                  capture_output=True, text=True, check=True).stdout)
+          for key in ('identical', 'events'):
+              if found[key] != committed[key]:
+                  print(f'{key}: {committed[key]!r} committed, {found[key]!r} now', file=sys.stderr)
+                  sys.exit(1)
+          print('identical and events unchanged')
+          "
