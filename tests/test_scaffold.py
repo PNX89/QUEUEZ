@@ -167,3 +167,33 @@ def test_the_offline_suite_imports_nothing_from_the_verdict_or_contract_groups()
         f"the offline suite imports a measuring instrument, so it is no longer the thing a "
         f"stranger gets by cloning and running pytest: {offenders}"
     )
+
+
+def test_every_untyped_third_party_module_is_named_at_both_levels() -> None:
+    """The condition CI runs in, asserted rather than reasoned about.
+
+    The lint job installs `--dev` and nothing else, so the broker and store packages do not
+    exist on the runner. That produces `import-not-found`, a different error from the
+    `attr-defined` seen where a package is installed but ships no types, and an override naming
+    only a submodule silences one of the two.
+    """
+    overrides = pyproject()["tool"]["mypy"]["overrides"]  # type: ignore[index]
+    named: set[str] = set()
+    for override in overrides:
+        named.update(override.get("module", []))
+
+    imported: set[str] = set()
+    for directory in ("src", "scripts", "tests", "tests_broker", "examples"):
+        for path in (REPO / directory).rglob("*.py"):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                for package in ("redis", "psycopg", "confluent_kafka"):
+                    if stripped.startswith((f"import {package}", f"from {package}")):
+                        imported.add(package)
+
+    for package in sorted(imported):
+        assert package in named, (
+            f"{package} is imported and not named as untyped, so mypy will fail to find it on a "
+            f"runner that installed the dev group alone"
+        )
+        assert f"{package}.*" in named, f"{package}.* is not named, so a submodule import fails"
