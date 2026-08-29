@@ -34,3 +34,12 @@ filterwarnings = ["error"]
 [tool.mypy]
 files = ["src", "tests", "tests_broker", "scripts", "examples"]
 strict = true
+
+[[tool.mypy.overrides]]
+# THE PARENT AND THE SUBMODULE, because they are two different errors. The lint job installs the
+# dev group alone, so on a clean runner none of these exist at all: that is `import-not-found`,
+# not the `attr-defined` you get on a machine where they are installed but ship no types. An
+# override naming only a submodule silences the second and not the first, and this repository
+# shipped that mistake once already in a sibling.
+module = ["redis", "redis.*", "psycopg", "psycopg.*"]
+ignore_missing_imports = true
