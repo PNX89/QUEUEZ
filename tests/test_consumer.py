@@ -282,3 +282,27 @@ def test_a_replay_reports_everything_as_a_duplicate_and_nothing_as_a_correction(
     assert second.applied == 0
     assert second.applied_as_correction == 0
     assert second.ignored_as_duplicate == len(built)
+
+
+def test_the_schema_applies_as_one_script_rather_than_needing_to_be_split() -> None:
+    """A DEFECT CAUSED BY A SENTENCE, which is the reason this is asserted.
+
+    The PostgreSQL fixture used to apply the schema by splitting it on `;`. The schema carries
+    comments explaining the two keys, one of them contained a semicolon, and the split cut a
+    CREATE TABLE in half. The error was `syntax error at end of input`, from an edit to prose.
+
+    Nothing should have to parse SQL to apply this. Both stores accept the whole script in one
+    call, and this checks the property rather than the punctuation.
+    """
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.executescript(consumer.SCHEMA_SQL)
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "select name from sqlite_master where type = 'table'"
+            ).fetchall()
+        }
+        assert {"bar", "applied"} <= tables
+    finally:
+        connection.close()

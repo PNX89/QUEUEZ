@@ -47,9 +47,12 @@ def sink() -> Iterator[Shim]:
     with psycopg.connect(DSN, autocommit=True) as connection:
         with connection.cursor() as cursor:
             cursor.execute("drop table if exists bar, applied cascade")
-            for statement in consumer.SCHEMA_SQL.split(";"):
-                if statement.strip():
-                    cursor.execute(statement)
+            # THE WHOLE SCRIPT IN ONE CALL, and splitting it on ";" was a real defect. The
+            # schema carries explanatory comments, one of them contained a semicolon, and the
+            # split cut a CREATE TABLE in half: `syntax error at end of input`, from a change to
+            # a sentence. psycopg runs multiple statements in one execute, so nothing has to
+            # parse SQL to apply the schema.
+            cursor.execute(consumer.SCHEMA_SQL)
         yield Shim(connection)
 
 
