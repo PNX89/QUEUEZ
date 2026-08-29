@@ -222,3 +222,25 @@ def test_a_failure_between_the_two_writes_rolls_both_back(
         f"have come apart, which means the fold and the record of it are not in one transaction "
         f"and a crash between them loses one or duplicates the other"
     )
+
+
+def test_the_offset_column_can_hold_the_offsets_this_feed_actually_uses() -> None:
+    """A DEFECT ONE STORE COULD NOT SEE, and the reason the second store leg exists.
+
+    The offsets in the committed session are around 6.46 billion. SQLite's INTEGER is eight
+    bytes so every test here passed; PostgreSQL's `integer` is four, and it rejected the first
+    row with `integer out of range`. The schema is one string used by both, and it now says
+    `bigint`, which both accept.
+
+    This asserts the schema rather than the behaviour, because the behaviour is only observable
+    in the store that has the narrower type.
+    """
+    assert "offset_seen bigint not null" in consumer.SCHEMA_SQL, (
+        "the offset column is no longer bigint, and a four-byte integer cannot hold the offsets "
+        "in the committed session"
+    )
+    largest = max(event.offset for event in session.read("session_one"))
+    assert largest > 2**31 - 1, (
+        f"the largest offset in the committed session is {largest}, which now fits in a "
+        f"four-byte integer, so this test no longer demonstrates anything"
+    )
