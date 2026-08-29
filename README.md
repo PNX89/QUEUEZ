@@ -8,6 +8,9 @@ sequence continuity and none of them looks at a clock.**
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+![A real run: the sequence monotone with no gaps while the wall clock steps backwards 547 times,
+and a consumer surviving four injected failures.](docs/demo.svg)
+
 <!-- quoted from docs/evidence/demo.txt -->
 ```text
   the sequence is monotone with 0 gaps
@@ -146,6 +149,44 @@ uv run mypy .
 ```
 
 <!-- toolset:start -->
+
+Part of the Q...Z toolset, all of it designing for the failure that does not announce itself:
+
+- [QUACKZ](https://github.com/PNX89/QUACKZ), deflating a backtest that only looks good because
+  it was picked out of two hundred.
+- [QUOTEZ](https://github.com/PNX89/QUOTEZ), market data an agent can read and cannot act on.
+- [QUELLZ](https://github.com/PNX89/QUELLZ), measuring what prompt-injection containment costs
+  in utility as well as in attack rate.
+- [QUIDZ](https://github.com/PNX89/QUIDZ), refusing the outbound payment that would have gone
+  out twice.
+- [QUESTZ](https://github.com/PNX89/QUESTZ), stopping a scraper before it writes a CSV from a
+  page that changed shape.
+- [QUIZZ](https://github.com/PNX89/QUIZZ), answering what a statistic said at the time, and
+  refusing when it cannot.
+- [QUARANTINEZ](https://github.com/PNX89/QUARANTINEZ), treating an outcome the venue never
+  confirmed as terminal rather than as a retry.
+- [QUENCHZ](https://github.com/PNX89/QUENCHZ), deciding in the open what a tool server gets free
+  while it is still somebody's subprocess.
+- [QUILTZ](https://github.com/PNX89/QUILTZ), proving infrastructure code wrong without a cloud
+  account, and saying what that cannot show.
+- [QUAYZ](https://github.com/PNX89/QUAYZ), telling a crash loop from an OOMKill, and naming the
+  failure that no single field finds.
+- [QUARRYZ](https://github.com/PNX89/QUARRYZ), keeping every version a statistical office
+  published, and failing the build when it quietly issues another.
+- [QUASHZ](https://github.com/PNX89/QUASHZ), refusing a row whose outcome had not been decided
+  yet when the decision would have been made.
+- [QUALMZ](https://github.com/PNX89/QUALMZ), a fixed number of looks at the holdout, where
+  re-running the same configuration does not buy another.
+- QUEUEZ, this one: ordering a feed by its sequence, because on a real recorded session the
+  clock goes backwards.
+
+**On QUARRYZ.** QUARRYZ asks when a publisher changed a number and keeps every version of it.
+This repository asks a narrower question about the same kind of stream: whether what arrived is
+what was sent, in the order it was sent, exactly once in effect. The two meet at the point where
+a consumer decides what it has already applied, and neither can answer the other's question: a
+bitemporal store cannot tell you that a resend doubled a total, and an offset ledger cannot tell
+you which version of a figure was current.
+
 <!-- toolset:end -->
 
 ## Licence
