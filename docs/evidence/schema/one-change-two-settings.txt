@@ -1,0 +1,13 @@
+$ uv run python scripts/measure_schema.py
+
+One change: a required field added to the normalised event schema, no default.
+
+  compatibility BACKWARD  HTTP 409   REJECTED
+  compatibility NONE      HTTP 200   ACCEPTED
+
+Under BACKWARD the producer's own registration fails, before a single message is
+written. Under NONE nothing fails, and every consumer already reading this subject
+meets a message it cannot decode, one at a time, wherever it happens to be running.
+
+The rejection reason, in the registry's own words:
+  {"error_code":409,"message":"Schema being registered is incompatible with an earlier schema for subject \"normalised-event-value\", details: [{errorType:'READER_FIELD_MISSING_DEFAULT_VALUE', descripti
