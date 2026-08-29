@@ -30,12 +30,17 @@ SCHEMA_SQL = """
 create table if not exists bar (
     topic  text not null,
     domain text not null,
-    events integer not null,
+    events bigint not null,
     primary key (topic, domain)
 );
 create table if not exists applied (
     topic       text not null,
-    offset_seen integer not null,
+    -- BIGINT, AND `integer` WAS WRONG IN A WAY ONLY ONE STORE NOTICED. These offsets are around
+    -- 6.46 billion, which does not fit in PostgreSQL's four-byte integer. SQLite's INTEGER is
+    -- eight bytes, so the offline suite passed on every one of them and the server rejected the
+    -- first with `integer out of range`. A schema that is correct in the store you develop
+    -- against and wrong in the one you deploy to is the reason this leg exists.
+    offset_seen bigint not null,
     fingerprint text not null,
     primary key (topic, offset_seen)
 );
