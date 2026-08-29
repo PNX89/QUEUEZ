@@ -1,0 +1,36 @@
+[project]
+name = "queuez"
+version = "0.1.0"
+description = "Ordering a feed by its sequence and never by its clock, because on a real stream the clock goes backwards"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "pyyaml>=6.0.3", "types-pyyaml>=6.0.12.20260815"]
+# The broker and the sink. Separate from the default install because the offline suite runs the
+# consumer's real rules against SQLite and a committed session, and the claim that it does is
+# worth being able to check by reading one file.
+broker = ["confluent-kafka>=2.6", "psycopg[binary]>=3.2", "redis>=5.2"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/queuez"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["error"]
+
+[tool.mypy]
+files = ["src", "tests", "scripts"]
+strict = true
