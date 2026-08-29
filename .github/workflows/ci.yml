@@ -133,3 +133,33 @@ jobs:
                   sys.exit(1)
           print('identical and events unchanged')
           "
+
+  # The last-value cache. Two measurements about a cache behaving in a way nobody chose: a
+  # stampede on one hot key, and the eviction policy the server starts with.
+  cache:
+    name: a stampede, and a default that stops it being a cache
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      QUEUEZ_REDIS: redis://127.0.0.1:16379/0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: stampede one key, then fill the server under its default policy
+        run: uv run --group broker python scripts/measure_cache.py
+      - name: fail if any measured outcome or transcript has changed
+        run: |
+          git status --porcelain docs/evidence/cache
+          git diff --exit-code -- docs/evidence/cache
+          test -z "$(git status --porcelain docs/evidence/cache)"

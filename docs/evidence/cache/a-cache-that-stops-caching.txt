@@ -1,0 +1,12 @@
+$ uv run --group broker python scripts/measure_cache.py
+
+24 callers, one key, expiring at the same moment:
+  without single flight   24 of them recomputed it
+  with single flight      1 of them recomputed it
+
+And the eviction policy this server starts with: noeviction.
+That is not a cache. When memory runs out it REFUSES writes rather than dropping
+old keys, and the write fails with OutOfMemoryError. A last-value cache configured this
+way stops accepting quotes at the moment there are more of them than usual, and
+the error surfaces at the writer, so the first symptom is a producer failing for
+a reason that has nothing to do with the producer.
