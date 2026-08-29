@@ -113,3 +113,16 @@ def duplicates(events: list[Event]) -> list[int]:
     for event in events:
         seen[event.offset] = seen.get(event.offset, 0) + 1
     return sorted(offset for offset, count in seen.items() if count > 1)
+
+
+def normalised(events: list[Event]) -> list[str]:
+    """The normalised series, as lines, and the format is a contract between two languages.
+
+    A second implementation of this exists in Rust, reading the same committed file, and a
+    conformance suite compares the two outputs line by line. Neither is the reference: they
+    either agree or the suite fails.
+
+    The format is deliberately dull. Padding, locale-aware formatting or a float would each be a
+    difference the suite would find and nobody would want.
+    """
+    return [f"{e.offset}|{e.topic}|{e.domain}|{e.kind}" for e in events]
