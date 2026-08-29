@@ -1,0 +1,65 @@
+name: Pages
+
+# Publishes site/index.html, the card at https://pnx89.github.io/QUEUEZ/.
+#
+# THIS WORKFLOW BUILDS NOTHING. The card is generated outside this repository from a shared
+# manifest and committed here, so there is no Node, no network beyond the upload and no token
+# beyond GITHUB_TOKEN. Proving the card still matches a live run belongs to ci.yml, which is the
+# only place that can re-run the demo and compare what it printed. A publication job that also
+# rebuilt would be a second place for the two to disagree, and the disagreement would be
+# invisible because the thing publishing would be the thing checking.
+#
+# Pages was enabled with the REST API rather than by actions/configure-pages, whose enablement
+# input needs a token beyond GITHUB_TOKEN. That keeps the no-secrets rule intact.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time, and a queued run is not worth cancelling: cancelling would leave the
+# live card on an older commit than main with nothing anywhere saying so.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Refuse to publish a card that is empty, stale or carries a banned dash
+        # The dash characters are written as their UTF-8 bytes on purpose: a check for a
+        # character cannot be the thing that introduces it.
+        run: |
+          test -s site/index.html || { echo "site/index.html is missing or empty"; exit 1; }
+          EM=$(printf '\xe2\x80\x94'); EN=$(printf '\xe2\x80\x93')
+          if LC_ALL=C grep -q -e "$EM" -e "$EN" site/index.html; then
+            echo "site/index.html contains an em or en dash"; exit 1
+          fi
+          # The card shows the demo's captured output, so it has to contain it. A card built
+          # from an older capture would publish numbers this repository no longer produces.
+          FIRST=$(head -1 docs/evidence/demo.txt)
+          grep -qF "$FIRST" site/index.html || {
+            echo "site/index.html does not contain the first line of docs/evidence/demo.txt"
+            echo "so the committed card was built from a different capture"
+            exit 1
+          }
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

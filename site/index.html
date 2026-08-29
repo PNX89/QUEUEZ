@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QUEUEZ</title>
+<meta name="description" content="ordering a feed by its sequence, because on a real recorded session the clock goes backwards">
+<style>
+  /* Light is defined on bare :root so a viewer with no preference gets a complete palette,
+     and only the tokens that differ are redefined for dark. */
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfbfa; --fg: #1a1a18; --muted: #55554e; --rule: #dedcd4;
+    --term-bg: #f4f3ee; --term-fg: #23231f; --accent: #7a4b12;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16161a; --fg: #e9e8e3; --muted: #a2a19a; --rule: #2e2e34;
+      --term-bg: #101014; --term-fg: #dcdbd4; --accent: #d9a441;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 3rem 1.25rem 5rem;
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.65 ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size: 2.25rem; letter-spacing: -0.02em; margin: 0 0 .35rem; }
+  .blurb { color: var(--muted); margin: 0 0 2rem; font-size: 1.05rem; }
+  .claim { font-size: 1.2rem; line-height: 1.5; margin: 0 0 2rem; border-left: 3px solid var(--accent); padding-left: 1rem; }
+  .facts { display: flex; flex-wrap: wrap; gap: 1.5rem; padding: 1rem 0; margin: 0 0 2rem;
+           border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+  .facts div { font-size: .9rem; }
+  .facts dt { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .07em; }
+  .facts dd { margin: .15rem 0 0; font-variant-numeric: tabular-nums; }
+  h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .09em; color: var(--muted);
+       margin: 2.5rem 0 .5rem; font-weight: 600; }
+  .cmd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem;
+         color: var(--muted); margin: 0 0 .5rem; }
+  /* Wide output scrolls inside its own box. The page body never scrolls sideways. */
+  pre { background: var(--term-bg); color: var(--term-fg); padding: 1.25rem; border-radius: 6px;
+        overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: .8rem; line-height: 1.5; margin: 0; }
+  .note { color: var(--muted); font-size: .82rem; margin: .6rem 0 0; }
+  ul { list-style: none; padding: 0; margin: .5rem 0 0; }
+  li { padding: .35rem 0; border-bottom: 1px solid var(--rule); }
+  li span { color: var(--muted); font-size: .88rem; }
+  a { color: inherit; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+  a:hover { color: var(--accent); }
+  footer { margin-top: 3.5rem; padding-top: 1.25rem; border-top: 1px solid var(--rule);
+           color: var(--muted); font-size: .82rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>QUEUEZ</h1>
+  <p class="blurb">ordering a feed by its sequence, because on a real recorded session the clock goes backwards.</p>
+
+  <p class="claim">A feed's sequence is the only ordering a consumer can trust, and this is the number that says so: on a session recorded from a real public push feed, in offset order, the wall clock steps backwards 547 times out of 2,024, by as much as 26 seconds, while the offset never does. Every rule here asserts on sequence continuity and none of them looks at a clock. The consumer stores its offset in the sink in the same transaction as the write, which is tested by failing the second write and asserting the first was rolled back, because that is the only crash a transaction is for.</p>
+
+  <dl class="facts">
+    <div><dt>Tests</dt><dd>66</dd></div>
+    <div><dt>Python</dt><dd>3.11 to 3.13</dd></div>
+    <div><dt>Release</dt><dd>v0.1.0</dd></div>
+    <div><dt>Licence</dt><dd>MIT</dd></div>
+  </dl>
+
+  <h2>The demo, as it really ran</h2>
+  <p class="cmd">$ uv run python examples/the_clock_goes_backwards.py</p>
+  <pre>2025 events, recorded from a real public feed, in offset order.
+
+  the sequence is monotone with 0 gaps
+  the wall clock goes BACKWARDS 547 times, by up to 26 seconds
+
+  offset 6463284365 says 1787992234
+  offset 6463284366 says 1787992208, which is 26 seconds earlier
+
+  A gap detector built on time reports gaps that are not there and misses the
+  ones that are. Every rule here asserts on the sequence and none looks at a clock.
+
+Each event also carries two clocks, and they disagree on 1576 of 2025:
+  the ISO instant sits between 0.036s and 27.5s after the other,
+  and never before it.
+
+Now the same session with four failures injected, 2035 events:
+
+  2022 applied
+  12 ignored, the resent window arriving twice
+  1 applied as a correction of a consumed record
+  2 gaps suspected while events were arriving
+  3 offsets that never arrived at all
+
+  The injected gap was 3 offsets wide, so one of those
+  suspected gaps was not a gap: it was the out-of-order delivery, resolving when
+  the offset behind it turned up. Alerting on the first number pages somebody
+  for a feed that is working.
+
+Replaying the whole tape a second time applies 0 events and
+ignores 2035. At-least-once delivery makes that ordinary.</pre>
+  <p class="note">Output captured on 2026-08-29. It is committed to the repository and a test fails when it
+    stops matching a live run, so this page cannot quietly drift from the code it describes.</p>
+
+  <h2>Read it</h2>
+  <ul>
+    <li><a href="https://github.com/PNX89/QUEUEZ">Source on GitHub</a> <span>the README carries the argument in full</span></li>
+    <li><a href="https://github.com/PNX89/QUEUEZ/releases/tag/v0.1.0">Release v0.1.0</a> <span>changelog and tag</span></li>
+  </ul>
+
+  <h2>The rest of the toolset</h2>
+  <ul>
+      <li><a href="https://pnx89.github.io/QUACKZ/">QUACKZ</a> <span>deflating a backtest that only looks good because it was picked out of two hundred</span></li>
+      <li><a href="https://pnx89.github.io/QUOTEZ/">QUOTEZ</a> <span>market data an agent can read and cannot act on</span></li>
+      <li><a href="https://pnx89.github.io/QUELLZ/">QUELLZ</a> <span>measuring what prompt-injection containment costs in utility as well as in attack rate</span></li>
+      <li><a href="https://pnx89.github.io/QUIDZ/">QUIDZ</a> <span>refusing the outbound payment that would have gone out twice</span></li>
+      <li><a href="https://pnx89.github.io/QUESTZ/">QUESTZ</a> <span>stopping a scraper before it writes a CSV from a page that changed shape</span></li>
+      <li><a href="https://pnx89.github.io/QUIZZ/">QUIZZ</a> <span>answering what a statistic said at the time, and refusing when it cannot</span></li>
+      <li><a href="https://pnx89.github.io/QUARANTINEZ/">QUARANTINEZ</a> <span>treating an outcome the venue never confirmed as terminal rather than as a retry</span></li>
+      <li><a href="https://pnx89.github.io/QUENCHZ/">QUENCHZ</a> <span>deciding in the open what a tool server gets free while it is still somebody's subprocess</span></li>
+      <li><a href="https://pnx89.github.io/QUILTZ/">QUILTZ</a> <span>proving infrastructure code wrong without a cloud account, and saying what that cannot show</span></li>
+      <li><a href="https://pnx89.github.io/QUAYZ/">QUAYZ</a> <span>telling a crash loop from an OOMKill, and naming the failure that no single field finds</span></li>
+      <li><a href="https://pnx89.github.io/QUARRYZ/">QUARRYZ</a> <span>keeping every version a statistical office published, and failing the build when it quietly issues another</span></li>
+      <li><a href="https://pnx89.github.io/QUASHZ/">QUASHZ</a> <span>refusing a row whose outcome had not been decided yet when the decision would have been made</span></li>
+      <li><a href="https://pnx89.github.io/QUALMZ/">QUALMZ</a> <span>a fixed number of looks at the holdout, where re-running the same configuration does not buy another</span></li>
+  </ul>
+
+  <footer>Quelin Zammit. Built for the failure that does not announce itself.</footer>
+</main>
+</body>
+</html>
