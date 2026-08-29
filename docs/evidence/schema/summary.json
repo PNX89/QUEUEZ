@@ -1,0 +1,16 @@
+{
+  "subject": "normalised-event-value",
+  "change": "a required field with no default",
+  "results": {
+    "BACKWARD": {
+      "status": 409,
+      "accepted": false,
+      "body": "{\"error_code\":409,\"message\":\"Schema being registered is incompatible with an earlier schema for subject \\\"normalised-event-value\\\", details: [{errorType:'READER_FIELD_MISSING_DEFAULT_VALUE', description:'The field 'sequence_source' at path '/fields/3' in the new schema has no default value and is missing in the old schema', additionalInfo:'sequence_source'}, {oldSchemaVersion: 1}, {oldSchema: '{\\\""
+    },
+    "NONE": {
+      "status": 200,
+      "accepted": true,
+      "body": "{\"id\":3}"
+    }
+  }
+}

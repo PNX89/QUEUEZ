@@ -28,3 +28,44 @@ jobs:
       python-versions: '["3.11", "3.12", "3.13"]'
       sync-args: "--dev"
       run-mypy: true
+
+  # The registry, run rather than described. A compatibility setting nobody has watched reject
+  # something is a setting nobody has tested.
+  #
+  # Redpanda is started with `docker run` rather than as a service container, because the image
+  # needs a command and a service container cannot give it one. It is also the command a reader
+  # would type, which is worth more than the indirection.
+  schema:
+    name: one breaking change, two compatibility settings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: start the broker and its registry
+        run: |
+          docker run -d --name queuez-rp -p 19092:19092 -p 18081:18081 \
+            docker.redpanda.com/redpandadata/redpanda:v25.2.3 \
+            redpanda start --overprovisioned --smp 1 --memory 1G --reserve-memory 0M \
+            --node-id 0 --check=false \
+            --kafka-addr PLAINTEXT://0.0.0.0:19092 \
+            --advertise-kafka-addr PLAINTEXT://127.0.0.1:19092 \
+            --schema-registry-addr 0.0.0.0:18081
+          # A readiness LOOP rather than a sleep. A fixed wait is either too short on a slow
+          # runner or wasted on a fast one, and the failure it produces looks like a bug in the
+          # thing being measured.
+          for attempt in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:18081/subjects >/dev/null; then
+              echo "the registry answered after ${attempt} attempts"; exit 0
+            fi
+            sleep 2
+          done
+          echo "the registry never became ready"; docker logs queuez-rp | tail -30; exit 1
+      - name: offer the same change under BACKWARD and under NONE
+        run: uv run python scripts/measure_schema.py
+      - name: fail if any measured outcome or transcript has changed
+        run: |
+          git status --porcelain docs/evidence/schema
+          git diff --exit-code -- docs/evidence/schema
+          test -z "$(git status --porcelain docs/evidence/schema)"
