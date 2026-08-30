@@ -6,10 +6,14 @@ aphorism in four files stops reading as a voice and starts reading as a template
 who notices the repetition reads the rest of the page differently. Three sentences were written
 out four, three and two times here before this test existed.
 
-A DOCUMENT NAMED THAT IS NOT THERE. A file pointing at `SOMETHING.md` is making a promise on
-behalf of a document, and the reader who follows it finds nothing. That is the same defect the
-doc contract already watches for in the README, one layer out: it applies to any file that names
-a document, not only to the front page.
+A DOCUMENT NAMED THAT IS NOT THERE. A file that names another document in capitals is making a
+promise on its behalf, and the reader who follows the reference finds nothing. That is the same
+defect the doc contract already watches for in the README, one layer out: it applies to any file
+naming a document, not only to the front page.
+
+NO EXAMPLE FILENAME IS QUOTED ANYWHERE IN HERE, and the first draft of this file quoted one. A
+guard whose own file contains the thing it forbids passes only while that file is untracked, so
+git decides when it starts failing. This one went red on the commit that added it.
 """
 
 from __future__ import annotations
