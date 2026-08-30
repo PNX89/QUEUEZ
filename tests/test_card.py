@@ -15,6 +15,8 @@ import sys
 import tomllib
 from typing import Any
 
+import pytest
+
 REPO = pathlib.Path(__file__).resolve().parents[1]
 FACTS = REPO / "docs" / "evidence" / "facts.json"
 
@@ -84,3 +86,69 @@ def test_a_published_card_shows_the_captured_demo_and_no_banned_dash() -> None:
     # in the comment directly under a comment saying not to. The linter caught it.
     for dash in ("\u2014", "\u2013"):
         assert dash not in html, f"the published card contains {dash!r}"
+
+
+def test_the_python_range_is_the_gating_matrix_and_orders_as_versions(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two latent defects in the function that publishes this number, neither of them visible.
+
+    The range on the card is correct today. It was produced by a function that matched every
+    quoted `x.y` anywhere in the workflow, so a quoted action version or a timeout would have
+    landed on a published page, and that ordered with `float`, so `float("3.9") > float("3.13")`
+    and a 3.9 leg would have published a range running backwards.
+
+    A correct output from a broken mechanism is the thing this whole portfolio argues against, so
+    the mechanism is tested rather than the output.
+    """
+    import json as _json
+    import sys
+
+    import yaml
+
+    sys.path.insert(0, str(REPO / "scripts"))
+    import capture_evidence
+
+    workflow = yaml.safe_load((REPO / ".github" / "workflows" / "ci.yml").read_text("utf-8"))
+    gating: set[str] = set()
+    for job in (workflow.get("jobs") or {}).values():
+        if job.get("continue-on-error"):
+            continue
+        declared = (job.get("with") or {}).get("python-versions")
+        if declared is None:
+            continue
+        gating.update(
+            str(v) for v in (_json.loads(declared) if isinstance(declared, str) else declared)
+        )
+
+    assert gating, "no job gates on a Python version, so the published range verifies nothing"
+    order = sorted(gating, key=lambda v: tuple(int(p) for p in v.split(".")))
+    expected = f"{order[0]} to {order[-1]}"
+
+    assert capture_evidence.python_range() == expected
+    facts = _json.loads((REPO / "docs" / "evidence" / "facts.json").read_text("utf-8"))
+    assert facts["python"] == expected, (
+        f"the card says {facts['python']} and CI gates on {expected}"
+    )
+
+    # THE ORDERING RULE, DRIVEN THROUGH THE REAL FUNCTION rather than restated beside it.
+    #
+    # This matters because of how the defect hides. No matrix in this repository contains a 3.9,
+    # so float ordering and version ordering agree on every version actually present, and
+    # swapping the production line back to `key=float` changes no output and fails nothing. A
+    # test that only asserted the rule as arithmetic would pin a fact and let the code revert.
+    #
+    # So the function is pointed at a workflow that DOES contain a 3.9, by moving its ROOT, and
+    # asked what it returns. Under `key=float` that is "3.11 to 3.9", a range running backwards
+    # on a published page.
+    fake = tmp_path / ".github" / "workflows"
+    fake.mkdir(parents=True)
+    (fake / "ci.yml").write_text(
+        'jobs:\n  checks:\n    with:\n      python-versions: \'["3.11", "3.9", "3.13"]\'\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(capture_evidence, "ROOT", tmp_path)
+    assert capture_evidence.python_range() == "3.9 to 3.13", (
+        "the version range is not ordered as versions. float('3.9') is greater than "
+        "float('3.13'), so this publishes a range running backwards the day a 3.9 leg exists"
+    )
