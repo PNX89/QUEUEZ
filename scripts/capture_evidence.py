@@ -54,11 +54,45 @@ def test_total() -> int:
 
 
 def python_range() -> str:
-    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    versions = re.findall(r'"(\d+\.\d+)"', workflow)
+    """The versions CI will FAIL the build over, read as structure and ordered as versions.
+
+    TWO DEFECTS, BOTH LATENT RATHER THAN LIVE. The published range is correct today and was
+    produced by a function that cannot be relied on to keep it correct.
+
+    First, it matched every quoted `x.y` anywhere in the workflow, not the Python matrix. A
+    quoted action version or a timeout would have landed on the published card. This repository's
+    sibling generator already carries the lesson, that a list has to be read as structure and
+    never as text that looks like structure, and it had not been carried here.
+
+    Second, and worse, it ordered with `float`. `float("3.9")` is 3.9 and `float("3.13")` is
+    3.13, so the moment a 3.9 leg existed the card would have published a range running
+    backwards. Versions are tuples of integers, not decimals.
+
+    A job allowed to fail is also skipped now. An advisory leg is a good thing to run and a
+    dishonest thing to advertise, which is the defect this same function had in QUOTEZ, where it
+    published 3.14 support the build would not fail over.
+    """
+    import yaml
+
+    workflow = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    )
+    versions: set[str] = set()
+    for job in (workflow.get("jobs") or {}).values():
+        if job.get("continue-on-error"):
+            continue
+        declared = (job.get("with") or {}).get("python-versions")
+        if declared is None:
+            continue
+        parsed = json.loads(declared) if isinstance(declared, str) else declared
+        versions.update(str(v) for v in parsed)
     if not versions:
-        raise SystemExit("the CI file names no Python versions")
-    return f"{min(versions, key=float)} to {max(versions, key=float)}"
+        raise SystemExit(
+            "no gating job declares python-versions, so this card would state a range that "
+            "nothing verifies"
+        )
+    ordered = sorted(versions, key=lambda v: tuple(int(part) for part in v.split(".")))
+    return f"{ordered[0]} to {ordered[-1]}"
 
 
 def release() -> str:
