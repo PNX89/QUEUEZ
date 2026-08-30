@@ -21,17 +21,28 @@ TOPIC = "eqiad.mediawiki.recentchange"
 
 def main() -> None:
     events = session.by_topic(session.read("session_one"))[TOPIC]
+
+    # BOTH CLOCKS, BECAUSE ONE COUNT WITHOUT ITS FIELD IS A NUMBER A READER CANNOT CHECK. This
+    # printed 547 and called it "the wall clock". The payload has two, and a reader reaching for
+    # the millisecond one recomputes 13 and concludes the 547 was picked. They are both true.
     backwards = session.backwards_clock_steps(events)
     worst = max(before.unix_second - after.unix_second for before, after in backwards)
+    drifting = session.backwards_clock_steps(events, clock=session.iso_instant)
+    worst_drift = max(session.iso_instant(b) - session.iso_instant(a) for b, a in drifting)
 
     print(f"{len(events)} events, recorded from a real public feed, in offset order.")
     print()
     print(f"  the sequence is monotone with {len(session.sequence_gaps(events))} gaps")
-    print(f"  the wall clock goes BACKWARDS {len(backwards)} times, by up to {worst} seconds")
+    print(f"  the Unix second in payload.timestamp goes BACKWARDS {len(backwards)} times,")
+    print(f"  by up to {worst} seconds. The ISO instant in meta.dt goes backwards")
+    print(f"  {len(drifting)} times, by up to {worst_drift:.3f} seconds.")
     print()
     before, after = max(backwards, key=lambda pair: pair[0].unix_second - pair[1].unix_second)
-    print(f"  offset {before.offset} says {before.unix_second}")
-    print(f"  offset {after.offset} says {after.unix_second}, which is {worst} seconds earlier")
+    print(f"  offset {before.offset} says {before.unix_second} and {before.iso_instant}")
+    print(f"  offset {after.offset} says {after.unix_second} and {after.iso_instant}")
+    step = session.iso_instant(after) - session.iso_instant(before)
+    print(f"  so the Unix second went back {worst} seconds there while the ISO instant")
+    print(f"  went FORWARD {step:.3f} seconds. They disagree about the direction too.")
     print()
     print("  A gap detector built on time reports gaps that are not there and misses the")
     print("  ones that are. Every rule here asserts on the sequence and none looks at a clock.")
@@ -39,9 +50,9 @@ def main() -> None:
 
     gaps = [e.clock_gap_seconds for e in events]
     disagree = sum(1 for gap in gaps if abs(gap) >= 1)
-    print(f"Each event also carries two clocks, and they disagree on {disagree} of {len(events)}:")
-    print(f"  the ISO instant sits between {min(gaps):.3f}s and {max(gaps):.1f}s after the other,")
-    print("  and never before it.")
+    print(f"The two also disagree about size, on {disagree} of {len(events)} events:")
+    print(f"  the ISO instant sits between {min(gaps):.3f}s and {max(gaps):.1f}s after the")
+    print("  Unix second, and never before it.")
     print()
 
     built, injected = tape.build(events)

@@ -68,6 +68,40 @@ def test_the_numbers_on_the_page_are_the_measured_ones() -> None:
     assert missing == {}, f"the README no longer states these measured figures: {missing}"
 
 
+def test_no_backwards_count_on_the_page_is_stated_without_the_clock_it_counted() -> None:
+    """547 AND 13 ARE BOTH TRUE AND THEY ARE ABOUT DIFFERENT FIELDS.
+
+    The page said "the wall clock" as though the payload had one. It has two, and the page says
+    so itself twenty lines further down. Counted on the Unix second in `payload.timestamp` the
+    session steps backwards 547 times by as much as 26 seconds; counted on the ISO instant in
+    `meta.dt` the same 2,024 pairs step backwards 13 times by at most 0.012. A reader who reaches
+    for the millisecond field, which is the one a consumer would normally take as event time,
+    recomputes 13 and concludes the 547 was picked. That is a worse outcome than never having
+    stated it, and the fix is a word rather than a smaller claim.
+    """
+    from queuez import session
+
+    events = session.by_topic(session.read("session_one"))["eqiad.mediawiki.recentchange"]
+    counted = {
+        str(len(session.backwards_clock_steps(events))),
+        str(len(session.backwards_clock_steps(events, clock=session.iso_instant))),
+    }
+    carrying = [
+        sentence
+        for sentence in paragraph_sentences(own_prose())
+        if "backwards" in sentence.lower() and any(count in sentence for count in counted)
+    ]
+    assert carrying, (
+        f"no sentence on the page states either backwards count {sorted(counted)}, so this test "
+        f"is checking nothing"
+    )
+    for sentence in carrying:
+        assert "unix second" in sentence.lower() or "iso instant" in sentence.lower(), (
+            f"this sentence states a backwards count and never says which of the two clocks it "
+            f"was counted on: {sentence!r}"
+        )
+
+
 def test_the_page_states_the_licence_decision_and_why_it_is_that_way() -> None:
     """The decision a reader would otherwise have to reconstruct from the capture script."""
     flattened = " ".join(own_prose().split()).lower()
@@ -182,6 +216,18 @@ NEGATIONS = ("not ", "no ", "never ", "nothing ", "cannot ", "does not", "withou
 
 def sentences(text: str) -> list[str]:
     return [part.strip() for part in re.split(r"(?<=[.!?])\s+", " ".join(text.split()))]
+
+
+def paragraph_sentences(text: str) -> list[str]:
+    """Sentences, and never one that runs across a blank line.
+
+    A MUTATION SAID THIS WAS NEEDED. `sentences` flattens the whole page before splitting, and
+    markdown does not end a heading, a badge row or an image with a full stop, so one sentence
+    there runs for twenty lines. Removing the clock's name from the headline left the check
+    below green, because the image alt text two paragraphs down still carried the word and the
+    two had been read as one sentence. Searching a page for a word is not checking a claim.
+    """
+    return [sentence for block in re.split(r"\n\s*\n", text) for sentence in sentences(block)]
 
 
 @pytest.mark.parametrize("phrase", CLAIMS_TO_AVOID)

@@ -15,6 +15,9 @@ import pytest
 from queuez import consumer, session, tape
 
 TOPIC = "eqiad.mediawiki.recentchange"
+#: The offset space is the topic AND the partition. Every row of the committed session is 0,
+#: which is exactly why the collision below had to be built by hand to be seen at all.
+PARTITION = 0
 
 
 @pytest.fixture
@@ -37,6 +40,36 @@ def totals_of(connection: sqlite3.Connection) -> int:
     return int(connection.execute("select sum(events) from bar").fetchone()[0] or 0)
 
 
+def folds_of_an_uninterrupted_run(built: list[session.Event]) -> int:
+    """What the tape is worth to a consumer nothing ever interrupts, which is the yardstick."""
+    connection = sqlite3.connect(":memory:")
+    connection.isolation_level = None
+    connection.executescript(consumer.SCHEMA_SQL)
+    try:
+        consumer.consume(connection, built)
+        return totals_of(connection)
+    finally:
+        connection.close()
+
+
+def invented(offset: int, partition: int, domain: str = "it.wikipedia.org") -> session.Event:
+    """One event that was never recorded, for the two facts the recorded session cannot show.
+
+    Every row of the committed file is partition 0, so a second partition has to be built here.
+    The clocks are constant because nothing below reads them.
+    """
+    return session.Event(
+        offset=offset,
+        partition=partition,
+        topic=TOPIC,
+        event_id=f"p{partition}-{offset}",
+        domain=domain,
+        kind="edit",
+        iso_instant="2026-08-29T08:30:11.983Z",
+        unix_second=1787992211,
+    )
+
+
 def test_the_recorded_session_is_clean_which_is_why_a_tape_is_invented(
     recorded: list[session.Event],
 ) -> None:
@@ -44,6 +77,28 @@ def test_the_recorded_session_is_clean_which_is_why_a_tape_is_invented(
     assert len(recorded) > 2000
     assert session.sequence_gaps(recorded) == []
     assert session.duplicates(recorded) == []
+
+
+def test_a_redelivered_offset_is_not_a_gap(recorded: list[session.Event]) -> None:
+    """THE ONE INPUT THE GAP DETECTOR WAS NEVER POINTED AT.
+
+    Every call to sequence_gaps in this repository passed the CLEAN recorded session, and the
+    invented tape exists precisely to carry what the clean one does not. Pointed at the tape,
+    `after.offset != before.offset + 1` reported fourteen gaps: the one that was injected, and
+    thirteen redeliveries, where the sorted list puts an offset beside itself and nothing is
+    missing at all. Thirteen of the fourteen were exactly what duplicates() reports.
+    """
+    built, injected = tape.build(recorded)
+    assert len(injected.gap_offsets) == tape.GAP_LENGTH
+    assert session.duplicates(built), (
+        "the tape carries no redelivered offset, so this test has nothing to tell a gap from"
+    )
+
+    one_gap = [(injected.gap_offsets[0] - 1, injected.gap_offsets[-1] + 1)]
+    assert session.sequence_gaps(built) == one_gap, (
+        f"sequence_gaps over the invented tape is not the one injected gap {one_gap}, so it is "
+        f"either missing it or reporting a redelivered offset as a hole"
+    )
 
 
 def test_the_clock_goes_backwards_on_the_real_feed_and_the_sequence_does_not(
@@ -63,6 +118,36 @@ def test_the_clock_goes_backwards_on_the_real_feed_and_the_sequence_does_not(
     worst = max(before.unix_second - after.unix_second for before, after in backwards)
     assert worst >= 10, f"the largest backwards step is {worst} seconds"
     assert session.sequence_gaps(recorded) == [], "the sequence is not monotone in this session"
+
+
+def test_the_two_clocks_do_not_agree_about_the_direction_either(
+    recorded: list[session.Event],
+) -> None:
+    """WHICH CLOCK, BECAUSE THE ANSWER IS 547 OR 13 DEPENDING ON THE FIELD READ.
+
+    The count above is about the Unix second in `payload.timestamp`. The same pairs read on the
+    ISO instant in `meta.dt` step backwards 13 times by at most 0.012 seconds, which is two
+    orders of magnitude away in both count and size. Every figure in this repository said "the
+    wall clock" and named neither, and a reader reaching for the millisecond field recomputes 13
+    and takes the 547 for invented.
+
+    The showcase pair is the argument in one line: it goes 26 seconds BACKWARDS on one clock and
+    forwards on the other, so the two do not even agree about which way time went.
+    """
+    on_unix = session.backwards_clock_steps(recorded)
+    on_iso = session.backwards_clock_steps(recorded, clock=session.iso_instant)
+    assert len(on_unix) > 10 * len(on_iso), (
+        f"the two clocks now step backwards {len(on_unix)} and {len(on_iso)} times, which is "
+        f"close enough that naming the field no longer changes the claim"
+    )
+    worst_drift = max(session.iso_instant(b) - session.iso_instant(a) for b, a in on_iso)
+    assert worst_drift < 1, f"the ISO instant now goes backwards by {worst_drift} seconds"
+
+    before, after = max(on_unix, key=lambda pair: pair[0].unix_second - pair[1].unix_second)
+    assert session.iso_instant(after) > session.iso_instant(before), (
+        "the worst backwards step on the Unix second no longer goes forwards on the ISO instant, "
+        "so the pair the demo prints has stopped showing the two clocks disagreeing"
+    )
 
 
 def test_the_two_clocks_in_one_payload_disagree_and_never_in_the_other_direction(
@@ -111,8 +196,9 @@ def test_the_consumer_knows_what_never_arrived_and_not_merely_what_looked_late(
     """TWO GAP COUNTS AND ONLY ONE IS TRUE.
 
     An out-of-order delivery looks exactly like a gap when it arrives and resolves when the
-    offset behind it turns up. Alerting on the arrival-time count pages somebody for a feed
-    that is working.
+    offset behind it turns up. A monitor wired to the arrival-time count therefore wakes
+    somebody up about a feed with nothing wrong with it, which is why both numbers are reported
+    and only one of them is the answer.
     """
     built, injected = tape.build(recorded)
     outcome = consumer.consume(sink, built)
@@ -138,30 +224,119 @@ def test_killing_the_consumer_between_writes_costs_nothing(
     acknowledgement survives.
     """
     built, _ = tape.build(recorded)
-
-    uninterrupted = sqlite3.connect(":memory:")
-    uninterrupted.isolation_level = None
-    uninterrupted.executescript(consumer.SCHEMA_SQL)
-    try:
-        consumer.consume(uninterrupted, built)
-        expected = totals_of(uninterrupted)
-    finally:
-        uninterrupted.close()
+    expected = folds_of_an_uninterrupted_run(built)
 
     consumer.consume(sink, built, stop_after=700)
-    resume_from = consumer.stored_offset(sink, TOPIC)
+    resume_from = consumer.stored_offset(sink, TOPIC, PARTITION)
     assert resume_from is not None
 
-    # The broker replays from the last acknowledged offset, which after a crash is BEHIND where
-    # the sink actually got to. Replaying a hundred events it has already applied is exactly the
-    # case this design exists to survive.
-    replayed = [event for event in built if event.offset > resume_from - 100]
+    # NO REWIND HERE ANY MORE, and the hundred that used to be subtracted was the tell. The
+    # pointer is the last offset with a complete run behind it, so it is already behind
+    # everything still in flight, and replaying what it hands back is what this design exists to
+    # survive rather than something a test has to arrange.
+    replayed = [event for event in built if event.offset > resume_from]
     consumer.consume(sink, replayed)
 
     assert totals_of(sink) == expected, (
         f"the interrupted run produced {totals_of(sink)} and the uninterrupted one {expected}, so "
         f"the replay was counted twice"
     )
+
+
+def test_resuming_inside_the_reorder_window_loses_nothing(
+    sink: sqlite3.Connection, recorded: list[session.Event]
+) -> None:
+    """THE CRASH THE OTHER RESUME TEST STEPS AROUND, and the reason its rewind was there.
+
+    That one stops at tape index 700, three hundred events past the injected reorder, where the
+    swap has long since resolved and the largest offset applied is also the last one with a
+    complete run behind it. The window where those two differ is the entire difficulty, and it
+    is on this tape on purpose. Stopped one event into it, `max(offset_seen)` is ahead of an
+    offset still in flight: resuming after it folded 2,022 events where an uninterrupted run
+    folds 2,023, and the lost event surfaced as a fourth missing offset on a tape that had three
+    removed from it. The old test hid that behind subtracting a hundred from the pointer.
+    """
+    built, injected = tape.build(recorded)
+    expected = folds_of_an_uninterrupted_run(built)
+
+    consumer.consume(sink, built, stop_after=tape.SWAP_AT + 1)
+    behind, ahead = injected.swapped_offsets
+
+    def applied(offset: int) -> bool:
+        row = sink.execute(
+            "select 1 from applied where topic = ? and partition_seen = ? and offset_seen = ?",
+            (TOPIC, PARTITION, offset),
+        ).fetchone()
+        return row is not None
+
+    assert applied(ahead) and not applied(behind), (
+        f"the consumer was not stopped inside the reorder window: {behind} and {ahead} were "
+        f"swapped on the tape and this test is only about the moment between them"
+    )
+
+    resume_from = consumer.stored_offset(sink, TOPIC, PARTITION)
+    assert resume_from is not None
+    assert resume_from < behind, (
+        f"the sink says to resume from {resume_from} and {behind} has not arrived yet, so the "
+        f"pointer is ahead of an event still in flight and that event is never applied again"
+    )
+
+    consumer.consume(sink, [event for event in built if event.offset > resume_from])
+    assert applied(behind), "the event behind the swap was never applied"
+    assert totals_of(sink) == expected, (
+        f"resuming from the sink folded {totals_of(sink)} events and an uninterrupted run folds "
+        f"{expected}, so the crash cost a write"
+    )
+
+
+def test_two_partitions_of_one_topic_do_not_deduplicate_against_each_other(
+    sink: sqlite3.Connection,
+) -> None:
+    """THE FIELD THE READER PARSES AND EVERYTHING DOWNSTREAM THEN IGNORED.
+
+    A topic's offsets are counted within each partition, so the same number in two of them
+    names two unrelated events. Keyed on the topic alone, the second one was dropped as a
+    redelivery when its content matched and booked as a restatement of the first when it did
+    not, which is by_topic's argument about two topics, one layer further down.
+
+    HAND BUILT, BECAUSE THE COMMITTED SESSION CANNOT SHOW THIS. Every row of it is partition 0.
+    There is no honest way to observe a collision between two partitions on a feed that has one.
+    """
+    assert consumer.fingerprint(invented(1, 0)) != consumer.fingerprint(invented(1, 1)), (
+        "one offset in two partitions hashes to one fingerprint, so a sink comparing content "
+        "cannot tell the second event from a redelivery of the first"
+    )
+
+    both = [invented(1, 0), invented(2, 0), invented(3, 0), invented(1, 1), invented(2, 1)]
+    outcome = consumer.consume(sink, both)
+    assert outcome.applied == len(both), (
+        f"{outcome.applied} of {len(both)} events were applied, {outcome.ignored_as_duplicate} "
+        f"were dropped as redeliveries and {outcome.applied_as_correction} were booked as "
+        f"restatements. Nothing here is either: they are two partitions"
+    )
+    assert outcome.ignored_as_duplicate == 0
+    assert outcome.applied_as_correction == 0
+    assert totals_of(sink) == len(both)
+
+
+def test_a_second_partition_is_not_a_hole_in_the_first(sink: sqlite3.Connection) -> None:
+    """The other half of the same defect, and the one that would page somebody.
+
+    Two partitions of a topic sit wherever their own producers have got to, so their offset
+    ranges have nothing to do with each other. Merged into one space, the distance between them
+    is reported as missing offsets: 1, 2, 3 alongside 900, 901 became 896 offsets that never
+    arrived, from a feed with nothing missing at all, plus one suspected gap.
+    """
+    apart = [invented(1, 0), invented(2, 0), invented(3, 0), invented(900, 1), invented(901, 1)]
+    outcome = consumer.consume(sink, apart)
+
+    assert outcome.never_arrived == (), (
+        f"the consumer reports {len(outcome.never_arrived)} missing offsets on a tape with "
+        f"nothing missing, so it is reading two partitions as one sequence"
+    )
+    assert outcome.suspected_on_arrival == []
+    assert consumer.stored_offset(sink, TOPIC, 0) == 3
+    assert consumer.stored_offset(sink, TOPIC, 1) == 901
 
 
 def test_offsets_from_two_origins_are_never_compared(recorded: list[session.Event]) -> None:

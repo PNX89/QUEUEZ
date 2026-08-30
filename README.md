@@ -1,29 +1,37 @@
 # QUEUEZ
 
 **A feed's sequence is the only ordering a consumer can trust. On a real recorded session the
-wall clock steps backwards 547 times while the offset never does, so every rule here asserts on
-sequence continuity and none of them looks at a clock.**
+Unix second in `payload.timestamp` steps backwards 547 times while the offset never does, so
+every rule here asserts on sequence continuity and none of them looks at a clock.**
 
 [![CI](https://github.com/PNX89/QUEUEZ/actions/workflows/ci.yml/badge.svg)](https://github.com/PNX89/QUEUEZ/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-![A real run: the sequence monotone with no gaps while the wall clock steps backwards 547 times,
-and a consumer surviving four injected failures.](docs/demo.svg)
+![A real run: the sequence monotone with no gaps while the Unix second in the payload steps
+backwards 547 times, and a consumer surviving four injected failures.](docs/demo.svg)
 
 <!-- quoted from docs/evidence/demo.txt -->
 ```text
   the sequence is monotone with 0 gaps
-  the wall clock goes BACKWARDS 547 times, by up to 26 seconds
+  the Unix second in payload.timestamp goes BACKWARDS 547 times,
+  by up to 26 seconds. The ISO instant in meta.dt goes backwards
+  13 times, by up to 0.012 seconds.
 ```
 
 That is 2,025 events from a Wikimedia EventStreams session, recorded once and committed here.
 **Source: Wikimedia EventStreams.** A gap detector built on time reports gaps that are not there
 and misses the ones that are, which is not a caution but this number.
 
-Each event also carries two clocks, an ISO instant and a Unix second, and they disagree on 1,576
-of them. The ISO instant is never the earlier of the two and the gap runs to 27.5 seconds. This
-repository does not say why: the feed records what it emitted, not what it was doing.
+**Both of those counts are true, which is why each one names its field.** The payload carries two
+clocks and they do not agree about direction, so a page stating 547 without naming the field it
+read invites a reader to reach for the other one, recompute 13, and conclude the figure was
+picked. The demo's own example pair is a 26 second step backwards on the Unix second and a 0.015
+second step forwards on the ISO instant.
+
+The two disagree about size as well: they differ on 1,576 of the 2,025 events, the ISO instant is
+never the earlier of the two, and the gap runs to 27.5 seconds. This repository does not say why:
+the feed records what it emitted, not what it was doing.
 
 One file to start with: [`src/queuez/consumer.py`](src/queuez/consumer.py).
 
@@ -52,6 +60,10 @@ both are an offset already seen. One must be dropped and the other applied, so w
 is every distinct content seen for an offset. That also makes a full replay free, which
 at-least-once delivery makes ordinary: replaying the whole tape applies nothing.
 
+**An offset means nothing outside its own partition**, so the topic and the partition are both in
+the key and in the fingerprint. The committed session is one partition throughout, which is why a
+two-partition tape has to be built by hand for anything here to be able to see the difference.
+
 ## The offset lives in the sink, in the same transaction as the write
 
 The broker's own offset store is not the source of truth here. If the process dies between
@@ -62,6 +74,11 @@ the acknowledgement.
 That claim is tested by failing the second write and asserting the first was rolled back, which
 is the only crash the transaction is actually for. Every other test stopped the consumer between
 transactions, and a version with the offset written outside the transaction passed all of them.
+
+**What the sink hands back is the last offset with a complete run behind it, not the largest one
+applied.** In the window where this tape delivers two events out of order, the largest applied
+offset is ahead of one still in flight, and resuming after it drops that event for good. The
+conservative pointer replays what it already has instead, and that replay costs nothing here.
 
 The same rules run against SQLite in the offline suite and against PostgreSQL in their own job.
 That second job earned its place on its first run: the offsets are around 6.46 billion, which

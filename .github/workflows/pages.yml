@@ -50,14 +50,12 @@ jobs:
           if LC_ALL=C grep -q -e "$EM" -e "$EN" site/index.html; then
             echo "site/index.html contains an em or en dash"; exit 1
           fi
-          # The card shows the demo's captured output, so it has to contain it. A card built
-          # from an older capture would publish numbers this repository no longer produces.
-          FIRST=$(head -1 docs/evidence/demo.txt)
-          grep -qF "$FIRST" site/index.html || {
-            echo "site/index.html does not contain the first line of docs/evidence/demo.txt"
-            echo "so the committed card was built from a different capture"
-            exit 1
-          }
+          # THE WHOLE CARD, NOT ITS FIRST LINE. This compared `head -1 docs/evidence/demo.txt`
+          # against the page and let everything else through: the rest of the transcript, the
+          # claim paragraph's figures and the test total were gated by nothing. The comparison
+          # lives in one script so this gate and the offline suite cannot drift apart either.
+          # python3 is already on the runner, so this still installs nothing.
+          python3 scripts/check_card.py
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site
