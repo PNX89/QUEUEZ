@@ -14,6 +14,7 @@ what was measured.
 
 from __future__ import annotations
 
+import html
 import json
 import pathlib
 import re
@@ -158,7 +159,14 @@ def test_every_command_the_page_offers_is_one_ci_runs() -> None:
 
 
 def test_every_block_quoted_from_a_transcript_is_in_that_transcript() -> None:
-    """OUTPUT, line by line, against the file each block names in an HTML comment."""
+    """OUTPUT, line by line, against the file each block names in an HTML comment.
+
+    ALSO COVERS docs/demo.svg, WHICH IS A QUOTED BLOCK TOO, hand drawn as an animated terminal
+    rather than a fenced code block. It named no source in an HTML comment and nothing checked it
+    against one: CI diffs docs/evidence/demo.txt against a committed copy on every push, and the
+    SVG quoting the same transcript would have kept stale figures silently forever, since nothing
+    generates it and nothing but this compared it.
+    """
     blocks = re.findall(r"<!-- quoted from (\S+) -->\n```text\n(.*?)```", README, re.S)
     assert blocks, "no block on the page declares where it was quoted from"
     for path, body in blocks:
@@ -170,6 +178,32 @@ def test_every_block_quoted_from_a_transcript_is_in_that_transcript() -> None:
                 assert line.strip() in lines, (
                     f"the page quotes {line.strip()!r} as coming from {path}, and it is not there"
                 )
+
+    svg_ref = re.search(r"\]\((docs/demo\.svg)\)", README)
+    assert svg_ref, "the README no longer links docs/demo.svg; update this test if it moved"
+    svg = (REPO / svg_ref.group(1)).read_text(encoding="utf-8")
+    texts = [html.unescape(found) for found in re.findall(r"<text[^>]*>(.*?)</text>", svg, re.S)]
+    assert len(texts) >= 3, f"docs/demo.svg has too few <text> elements to be a transcript: {texts}"
+    assert texts[0].startswith("$ "), f"the terminal's first line is not a command: {texts[0]!r}"
+    elided = re.match(r"\.\.\. (\d+) more lines", texts[-1])
+    assert elided, f"the terminal's last line does not say how many lines were cut: {texts[-1]!r}"
+
+    demo_path = REPO / "docs" / "evidence" / "demo.txt"
+    demo_lines = demo_path.read_text(encoding="utf-8").splitlines()
+    shown = texts[1:-1]
+    if shown and shown[0] == "":
+        shown = shown[1:]  # one blank spacer between the echoed command and the demo's output
+    if shown and shown[-1] == "":
+        shown = shown[:-1]  # one blank spacer between the last shown line and the elision line
+    assert shown == demo_lines[: len(shown)], (
+        "docs/demo.svg no longer quotes the start of docs/evidence/demo.txt verbatim, line for "
+        "line; regenerate the SVG from the current transcript"
+    )
+    remaining = len(demo_lines) - len(shown)
+    assert int(elided.group(1)) == remaining, (
+        f"docs/demo.svg says {elided.group(1)} more lines follow the ones it shows, and "
+        f"{remaining} actually do"
+    )
 
 
 def test_every_path_and_link_on_the_page_exists() -> None:
@@ -211,7 +245,40 @@ BELONGS_TO_A_SIBLING = (
     "per-caller budget",
 )
 
-NEGATIONS = ("not ", "no ", "never ", "nothing ", "cannot ", "does not", "without ")
+#: A negation only counts if it attaches to the phrase, not merely shares a sentence with it.
+#: Bare "no " is deliberately NOT in this list: it precedes an ordinary noun ("no gaps", "no
+#: downtime", "no reason", "no default") far more often than it precedes a banned claim, so "no"
+#: only counts when it is the word immediately before the phrase, checked separately below.
+#: "cannot " is not a separate entry either: tokenised by word, "cannot" is its own token and
+#: does not contain "not" the way the substring did.
+NEGATION_WORDS = ("not", "never", "nothing", "cannot", "without")
+#: Words scanned immediately before the phrase, not the rest of the sentence.
+NEGATION_WINDOW = 6
+
+
+def all_occurrences_are_negated(sentence_lower: str, phrase: str) -> bool:
+    """Every mention of `phrase` in this (lowercased) sentence has a negation attached to it.
+
+    THE ORIGINAL CHECKED THE WHOLE SENTENCE FOR ANY OF A LIST OF NEGATION WORDS, AND "no " WAS ON
+    IT. "QUEUEZ has run in production for two years with no downtime." contains "no ", so it
+    passed outright: the claim it makes is "in production", and "no" is doing nothing to deny it,
+    it is denying "downtime" several words later. Coverage was almost an accident too: of the
+    eleven phrases this guards, only one has ever matched a sentence on this page, so the other
+    ten were never tried against real text either way. Requiring the negation to sit within a
+    handful of words immediately before the phrase, rather than anywhere in the sentence, is what
+    makes the guard test the claim instead of the sentence's mood.
+    """
+    matches = list(re.finditer(re.escape(phrase), sentence_lower))
+    if not matches:
+        return True  # vacuous: the phrase is not in this sentence at all
+    for match in matches:
+        words = re.findall(r"[a-z']+", sentence_lower[: match.start()])[-NEGATION_WINDOW:]
+        if any(word in NEGATION_WORDS for word in words):
+            continue
+        if words[-1:] == ["no"]:
+            continue
+        return False
+    return True
 
 
 def sentences(text: str) -> list[str]:
@@ -239,13 +306,29 @@ def test_the_page_never_claims_what_it_cannot_support(phrase: str) -> None:
     on the sentence saying no is a ban that pushes the disclaimer off the page, which is the
     opposite of what it is for.
 
-    So every sentence containing one of these has to contain a negation as well.
+    So every sentence containing one of these has to contain a negation as well, and the
+    negation has to attach to the phrase rather than merely share its sentence.
     """
     for sentence in sentences(own_prose()):
         if phrase in sentence.lower():
-            assert any(negation in sentence.lower() for negation in NEGATIONS), (
+            assert all_occurrences_are_negated(sentence.lower(), phrase), (
                 f"this sentence claims {phrase!r} rather than denying it: {sentence!r}"
             )
+    # THE GUARD'S OWN DISCRIMINATING POWER, SHOWN RATHER THAN ASSUMED, riding the two
+    # parametrised cases this page actually exercises rather than adding a new test: the
+    # published card states a test total, and a fixture that added to it would go stale the
+    # moment this file is committed without the card being regenerated by the tool that owns it.
+    # Coverage before this fix was almost accidental: of these eleven phrases, only "matching
+    # engine" has ever matched a real sentence here, so most of the other ten had never been
+    # tried against real text either way.
+    if phrase == "in production":
+        assert not all_occurrences_are_negated(
+            "queuez has run in production for two years with no downtime.", phrase
+        ), "a bare 'no' attached to an unrelated noun several words later must not negate this"
+    if phrase == "matching engine":
+        assert all_occurrences_are_negated(
+            "it does not reconstruct a book, and nothing here is a matching engine.", phrase
+        )
 
 
 @pytest.mark.parametrize("phrase", BELONGS_TO_A_SIBLING)

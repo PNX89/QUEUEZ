@@ -16,6 +16,7 @@ import tomllib
 from typing import Any
 
 import pytest
+import yaml
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 FACTS = REPO / "docs" / "evidence" / "facts.json"
@@ -53,10 +54,29 @@ def test_the_stated_test_total_counts_both_suites() -> None:
 
 
 def test_the_stated_python_range_is_the_one_ci_runs() -> None:
-    workflow = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    versions = re.findall(r'"(\d+\.\d+)"', workflow)
-    assert versions
-    assert facts()["python"] == f"{min(versions, key=float)} to {max(versions, key=float)}"
+    """The range read as structure, not as any quoted decimal the workflow happens to contain.
+
+    THIS USED TO MATCH `re.findall(r'"(\\d+\\.\\d+)"', workflow)` OVER THE WHOLE FILE AND ORDER
+    THE RESULT WITH `float`, a verbatim copy of the same broken expression `python_range` used to
+    compute the number in the first place. Once the two sides ran identical code the assertion
+    could not disagree with itself, and the regex over the whole file would also have picked up
+    any other quoted `x.y`, an action version or an image tag, that a future workflow edit adds.
+    This reads only the `python-versions` matrix each gating job declares and orders it as
+    versions, so it fails if the published range stops being that matrix's low and high end.
+    """
+    workflow = yaml.safe_load((REPO / ".github" / "workflows" / "ci.yml").read_text("utf-8"))
+    versions: set[str] = set()
+    for job in (workflow.get("jobs") or {}).values():
+        if job.get("continue-on-error"):
+            continue
+        declared = (job.get("with") or {}).get("python-versions")
+        if declared is None:
+            continue
+        parsed = json.loads(declared) if isinstance(declared, str) else declared
+        versions.update(str(v) for v in parsed)
+    assert versions, "no gating job declares python-versions, so the card verifies nothing"
+    ordered = sorted(versions, key=lambda v: tuple(int(part) for part in v.split(".")))
+    assert facts()["python"] == f"{ordered[0]} to {ordered[-1]}"
 
 
 def test_the_stated_release_matches_the_package_version() -> None:
@@ -162,8 +182,6 @@ def test_the_python_range_is_the_gating_matrix_and_orders_as_versions(
     """
     import json as _json
     import sys
-
-    import yaml
 
     sys.path.insert(0, str(REPO / "scripts"))
     import capture_evidence
