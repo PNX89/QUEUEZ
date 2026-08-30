@@ -30,7 +30,8 @@ def test_total() -> int:
     """Collected by pytest across BOTH suites, because the split is an implementation detail.
 
     A total that counted only `tests` would understate the repository by every test that needs
-    a real PostgreSQL, which is where the grant is watched refusing.
+    a real PostgreSQL, which is where the same rules meet a transaction held by a process on the
+    other end of a socket.
     """
     total = 0
     for directory in ("tests", "tests_broker"):

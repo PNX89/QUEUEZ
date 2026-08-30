@@ -14,7 +14,12 @@ dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "pyyaml>=6.0.3", "types-pyyaml>=6
 # The broker and the sink. Separate from the default install because the offline suite runs the
 # consumer's real rules against SQLite and a committed session, and the claim that it does is
 # worth being able to check by reading one file.
-broker = ["confluent-kafka>=2.6", "psycopg[binary]>=3.2", "redis>=5.2"]
+#
+# NO KAFKA CLIENT HERE, and there was one. `confluent-kafka` was declared and imported by
+# nothing: the registry leg speaks to Redpanda over HTTP with urllib and the sink leg speaks to
+# PostgreSQL with psycopg. A dependency nothing imports is a claim about the shape of the
+# project that the code does not make, and it was installed on two CI legs to be unused.
+broker = ["psycopg[binary]>=3.2", "redis>=5.2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/queuez"]

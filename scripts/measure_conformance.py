@@ -2,10 +2,9 @@
 
     uv run python scripts/measure_conformance.py
 
-NEITHER IS THE REFERENCE. A normalisation is a specification, and a specification with one
-implementation is a specification nobody has read. Both read the same committed file and write
-the same normalised series; if they disagree anywhere, the suite fails and says where. It does
-not pick a winner, because there is no reason to think the older one is right.
+NEITHER IS THE REFERENCE, and that is the whole design of this. Both read the same committed
+file and write the same normalised series; if they disagree anywhere, the suite fails and says
+where. It does not pick a winner, because there is no reason to think the older one is right.
 
 THE TIMING IS REPORTED AND IS NOT THE POINT. It is one file, read once, on whatever machine
 happened to run it, and it is published because the question gets asked rather than because it

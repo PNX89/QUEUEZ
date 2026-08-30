@@ -1,9 +1,9 @@
 //! Read a recorded session and emit the normalised series, exactly as the Python reader does.
 //!
-//! WHY THE SAME THING TWICE. A normalisation is a specification, and a specification with one
-//! implementation is a specification nobody has read. Writing it again in a language with
-//! different defaults, no exceptions and explicit integer widths is the cheapest way to find out
-//! whether the first one was describing what it meant to.
+//! WHY THE SAME THING TWICE. One implementation of a format is an implementation and not a
+//! specification: nothing has ever had to agree with it, so nowhere does it say which of its
+//! behaviours were chosen. Writing it again in a language with different defaults, no exceptions
+//! and explicit integer widths is the cheapest way to find out which ones were.
 //!
 //! The conformance suite runs both against the same committed file and compares the output line
 //! by line. Neither is allowed to be the reference: they either agree or the suite fails.

@@ -99,8 +99,8 @@ jobs:
       - name: run the consumer against PostgreSQL
         run: uv run --group broker pytest tests_broker -q
 
-  # The same normalisation, written twice, compared line by line. A specification with one
-  # implementation is a specification nobody has read.
+  # The same normalisation, written twice, compared line by line. Neither side is allowed to be
+  # the reference: they agree, or this job fails and names the line where they stopped.
   #
   # The evidence carries a timing, so this job REGENERATES it and diffs only the summary's
   # `identical` flag rather than the whole file: a wall-clock figure differs on every runner,
@@ -183,3 +183,8 @@ jobs:
           git status --porcelain docs/evidence/demo.txt
           git diff --exit-code -- docs/evidence/demo.txt
           test -z "$(git status --porcelain docs/evidence/demo.txt)"
+      # ALSO HERE, AND NOT ONLY IN THE PUBLICATION GATE. pages.yml runs on a change under
+      # `site/`, so a demo whose output moved would leave the card stating figures the code no
+      # longer produces and nothing would run until somebody happened to touch the card.
+      - name: fail if the published card no longer matches this repository
+        run: python3 scripts/check_card.py
