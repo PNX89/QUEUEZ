@@ -18,9 +18,9 @@ same change is not a setting anybody has tested.
 
 THE REGISTRY IS REDPANDA'S, NOT CONFLUENT'S, and that is a deliberate choice recorded in an ADR:
 one binary with the registry built in, rather than a broker plus a separate registry service.
-Redpanda is BSL 1.1, source-available rather than open source, converting to Apache 2.0 four
-years after each release. Confluent Schema Registry was excluded for wanting a second service,
-not for its licence.
+Its licence is BSL 1.1, which the README sets out in full: source-available and not open
+source. Confluent Schema Registry was excluded for wanting a second service, not for its
+licence.
 """
 
 from __future__ import annotations

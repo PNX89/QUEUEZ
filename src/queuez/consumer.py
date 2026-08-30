@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import Any
 
 from .session import Event
@@ -35,6 +36,17 @@ create table if not exists bar (
 );
 create table if not exists applied (
     topic       text not null,
+    -- THE PARTITION IS PART OF THE OFFSET, AND LEAVING IT OUT WAS A SILENT COLLISION. Offsets
+    -- are per partition, so offset 1 of partition 0 and offset 1 of partition 1 are two
+    -- different events in two different sequences. Keyed on the topic alone, the second of that
+    -- pair was read as a redelivery when its content matched and as a restatement when it did
+    -- not, and the missing-offset count filled with the distance between the two partitions'
+    -- ranges. Every row of the committed session is partition 0, so nothing in the suite could
+    -- see it and the first multi-partition topic would have.
+    --
+    -- Named `partition_seen` for the same reason as `offset_seen`: both words are keywords in
+    -- these stores, and a column nobody has to quote is worth more than the shorter name.
+    partition_seen integer not null,
     -- BIGINT, AND `integer` WAS WRONG IN A WAY ONLY ONE STORE NOTICED. These offsets are around
     -- 6.46 billion, which does not fit in PostgreSQL's four-byte integer. SQLite's INTEGER is
     -- eight bytes, so the offline suite passed on every one of them and the server rejected the
@@ -53,14 +65,19 @@ create table if not exists applied (
     -- Recording every distinct content seen for an offset fixes it by construction. A
     -- fingerprint already present is a redelivery whatever order it arrives in, and a
     -- fingerprint never seen is a restatement. Replay is then free.
-    primary key (topic, offset_seen, fingerprint)
+    primary key (topic, partition_seen, offset_seen, fingerprint)
 );
 """
 
 
 def fingerprint(event: Event) -> str:
-    """What the consumer folded on, so a restatement can be told from a redelivery."""
-    payload = f"{event.topic}|{event.offset}|{event.domain}|{event.kind}"
+    """What the consumer folded on, so a restatement can be told from a redelivery.
+
+    The partition is in here as well as in the key, because two events from two partitions of
+    one topic are two events even when everything else about them matches, and a function that
+    hands back the same digest for both is a trap laid for whoever reads it next.
+    """
+    payload = f"{event.topic}|{event.partition}|{event.offset}|{event.domain}|{event.kind}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -74,8 +91,12 @@ class Outcome:
 
     They differ, and the difference is not noise: an out-of-order delivery LOOKS exactly like a
     gap at the moment it arrives, and resolves when the offset behind it turns up next. On the
-    committed tape, arrival-time detection reports two gaps of which one is not a gap at all.
-    Alerting on the first number pages somebody for a feed that is working.
+    committed tape, arrival-time detection reports two gaps of which one is not a gap at all,
+    which is what the example prints and what the README argues from.
+
+    BOTH ARE COUNTED PER (TOPIC, PARTITION), because that pair is the offset space. They are
+    reported flattened, as offsets and as pairs of offsets, so a reader wanting to know which
+    space one came from has to go back to the tape for it.
     """
 
     applied: int = 0
@@ -97,17 +118,22 @@ def consume(connection: Any, events: Iterable[Event], *, stop_after: int | None 
     is for, and a crash between them is what the stored offset is for.
     """
     outcome = Outcome()
-    highest: dict[str, int] = {}
-    seen_offsets: dict[str, set[int]] = {}
+    # KEYED ON THE OFFSET SPACE, WHICH IS THE TOPIC AND THE PARTITION TOGETHER. Keyed on the
+    # topic alone these three counters read two partitions as one sequence, which is the same
+    # mistake as merging two topics and by_topic already refuses to make it.
+    highest: dict[tuple[str, int], int] = {}
+    seen_offsets: dict[tuple[str, int], set[int]] = {}
 
     for index, event in enumerate(events):
         if stop_after is not None and index >= stop_after:
             break
 
+        space = (event.topic, event.partition)
         current = fingerprint(event)
         already = connection.execute(
-            "select 1 from applied where topic = ? and offset_seen = ? and fingerprint = ?",
-            (event.topic, event.offset, current),
+            "select 1 from applied where topic = ? and partition_seen = ? and offset_seen = ?"
+            " and fingerprint = ?",
+            (event.topic, event.partition, event.offset, current),
         ).fetchone()
         if already is not None:
             outcome.ignored_as_duplicate += 1
@@ -117,8 +143,8 @@ def consume(connection: Any, events: Iterable[Event], *, stop_after: int | None 
         # redelivery. This is read BEFORE the write below, so the count is of what arrived
         # rather than of what the table happens to hold afterwards.
         seen_before = connection.execute(
-            "select 1 from applied where topic = ? and offset_seen = ?",
-            (event.topic, event.offset),
+            "select 1 from applied where topic = ? and partition_seen = ? and offset_seen = ?",
+            (event.topic, event.partition, event.offset),
         ).fetchone()
 
         # ONE TRANSACTION, TWO WRITES. The fold and the record of having folded it are the same
@@ -134,10 +160,11 @@ def consume(connection: Any, events: Iterable[Event], *, stop_after: int | None 
             )
             connection.execute(
                 """
-                insert into applied (topic, offset_seen, fingerprint) values (?, ?, ?)
-                on conflict (topic, offset_seen, fingerprint) do nothing
+                insert into applied (topic, partition_seen, offset_seen, fingerprint)
+                values (?, ?, ?, ?)
+                on conflict (topic, partition_seen, offset_seen, fingerprint) do nothing
                 """,
-                (event.topic, event.offset, current),
+                (event.topic, event.partition, event.offset, current),
             )
             connection.execute("commit")
         except Exception:
@@ -149,32 +176,62 @@ def consume(connection: Any, events: Iterable[Event], *, stop_after: int | None 
         else:
             outcome.applied += 1
 
-        seen_offsets.setdefault(event.topic, set()).add(event.offset)
-        last = highest.get(event.topic)
+        seen_offsets.setdefault(space, set()).add(event.offset)
+        last = highest.get(space)
         if last is not None and event.offset > last + 1:
             assert outcome.suspected_on_arrival is not None
             outcome.suspected_on_arrival.append((last, event.offset))
-        highest[event.topic] = max(last or 0, event.offset)
+        highest[space] = max(last or 0, event.offset)
 
     # THE TRUTH, COMPUTED AFTER THE FACT. Everything between the lowest and highest offset seen
     # that never arrived at all. An out-of-order delivery does not appear here, because by the
     # end it did arrive.
+    #
+    # WALKED AS PAIRS RATHER THAN OVER `range(min, max)`. The list is then proportional to what
+    # is actually missing rather than to the distance between the ends, and these offsets start
+    # at six and a half billion: one partition read as two spaces, or one truly wide split, and
+    # the old form allocated a list the size of the span to find three holes in it.
     missing: list[int] = []
-    for topic, offsets in seen_offsets.items():
-        if not offsets:
-            continue
+    for offsets in seen_offsets.values():
         missing += [
-            offset for offset in range(min(offsets), max(offsets) + 1) if offset not in offsets
+            absent
+            for lower, upper in pairwise(sorted(offsets))
+            for absent in range(lower + 1, upper)
         ]
-        del topic
     outcome.never_arrived = tuple(sorted(missing))
 
     return outcome
 
 
-def stored_offset(connection: Any, topic: str) -> int | None:
-    """Where to resume from, read out of the sink rather than out of the broker."""
-    row = connection.execute(
-        "select max(offset_seen) from applied where topic = ?", (topic,)
-    ).fetchone()
-    return None if row is None or row[0] is None else int(row[0])
+def stored_offset(connection: Any, topic: str, partition: int) -> int | None:
+    """Where to resume from, read out of the sink rather than out of the broker.
+
+    THE HIGHEST OFFSET WITH NOTHING UNAPPLIED BELOW IT, and `max(offset_seen)` was the wrong
+    answer to that question. Out-of-order delivery is one of the four failures the tape injects
+    on purpose, and in that window the largest offset applied sits AHEAD of the last one with a
+    complete run behind it. Resume after the maximum and the event the reorder left behind is
+    below the pointer for ever: on the committed tape, crashing on the swap and resuming at the
+    maximum folded 2,022 events where an uninterrupted run folds 2,023, and the lost offset
+    showed up as a fourth entry in a list of missing offsets that only ever had three.
+
+    RESUMING FROM HERE REPLAYS, AND THAT IS THE POINT RATHER THAN THE PRICE. A permanent gap
+    pins this pointer behind it, because the sink cannot tell an offset that never arrived from
+    one still in flight and guessing the first loses a write. What that costs is redelivery of
+    everything after the hole, and redelivery is free here by construction: the fingerprint is
+    part of the key, so a second pass over the whole tape applies nothing.
+    """
+    cursor = connection.execute(
+        "select offset_seen from applied where topic = ? and partition_seen = ?"
+        " order by offset_seen",
+        (topic, partition),
+    )
+    contiguous: int | None = None
+    while (row := cursor.fetchone()) is not None:
+        offset = int(row[0])
+        if contiguous is None or offset == contiguous + 1:
+            contiguous = offset
+        elif offset > contiguous + 1:
+            break
+        # An offset equal to the one before it is the same offset under a second fingerprint,
+        # which is a correction rather than a step, so the run continues through it.
+    return contiguous

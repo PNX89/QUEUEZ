@@ -8,9 +8,15 @@ written first for that reason.
 from __future__ import annotations
 
 import pathlib
+import re
 import tomllib
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
+
+#: What the broker leg installs, as IMPORT names, pinned here by name and by size. Two tests
+#: below read it, so a tuple that quietly lost an entry would leave both of them covering one
+#: package fewer and still green. It is checked against the dependency group it describes.
+MEASURED_WITH = ("psycopg", "redis")
 
 
 def pyproject() -> dict[str, object]:
@@ -88,10 +94,10 @@ def test_mypy_covers_every_directory_holding_python() -> None:
 def test_the_suite_that_needs_a_broker_is_run_by_ci() -> None:
     """The other half of splitting the suite, and the half that is easy to forget.
 
-    Moving the tests that need scikit-learn and DuckDB out of `testpaths` makes the offline
-    claim true and makes those tests trivially skippable: they are now in a directory nothing
-    runs unless something says so. So the workflow is parsed and the command that runs them is
-    asserted, rather than the directory merely existing.
+    Moving the tests that need a PostgreSQL server and psycopg out of `testpaths` makes the
+    offline claim true and makes those tests trivially skippable: they are now in a directory
+    nothing runs unless something says so. So the workflow is parsed and the command that runs
+    them is asserted, rather than the directory merely existing.
     """
     import yaml
 
@@ -120,9 +126,13 @@ def test_no_third_party_binary_is_tracked() -> None:
     """A vendored engine binary in git history is a hundred megabytes nobody can remove later.
 
     ASKS GIT, AND THE FIRST VERSION WALKED THE WORKING TREE. It said "tracked" in its name and
-    scanned every file on disk, so it went red the moment `.venv` contained a `soda` executable:
-    a virtualenv is not the repository, and a test that cannot tell the difference reports a
-    defect that does not exist while proving nothing about what was committed.
+    scanned every file on disk, so any virtualenv holding an executable with one of these names
+    turned it red: a virtualenv is not the repository, and a test that cannot tell the
+    difference reports a defect that does not exist while proving nothing about what was
+    committed.
+
+    The three names are the servers this repository actually talks to. A list naming engines it
+    has never heard of would look like coverage and watch nothing.
     """
     import subprocess
 
@@ -130,7 +140,7 @@ def test_no_third_party_binary_is_tracked() -> None:
         ["git", "ls-files"], capture_output=True, text=True, cwd=REPO, check=True
     ).stdout.split()
     names = {pathlib.PurePosixPath(entry).name for entry in listed}
-    for binary in ("clickhouse", "rpk", "redis-server"):
+    for binary in ("redpanda", "rpk", "redis-server", "postgres"):
         assert binary not in names, f"a {binary} binary is committed"
 
     big = [
@@ -144,28 +154,64 @@ def test_no_third_party_binary_is_tracked() -> None:
 def test_the_offline_suite_imports_nothing_from_the_verdict_or_contract_groups() -> None:
     """The claim that cloning this and running pytest with `--dev` alone works.
 
-    scikit-learn, DuckDB, Hypothesis and Soda are what the verdict is COMPUTED with, and they
-    are named in their own dependency groups so that the boundary is visible in one file. The
-    boundary only means anything if the offline suite really does stay on the other side of it,
-    so it is asserted rather than intended, from the first commit rather than after the first
-    time somebody notices.
+    psycopg and redis are what the broker legs are MEASURED WITH: a PostgreSQL server on the
+    other end of a socket, and a Redis the cache measurements fill up. They are named in their
+    own dependency group so that the boundary is visible in one file. The boundary only means
+    anything if the offline suite really does stay on the other side of it, so it is asserted
+    rather than intended, from the first commit rather than after somebody notices.
     """
-    # Hypothesis is deliberately NOT in this list. It is a test tool that ships in the dev
-    # group beside pytest, and it computes no part of the verdict. Everything here is something
-    # the verdict is measured WITH, which is the line the dependency groups draw.
-    heavy = ("confluent_kafka", "psycopg", "redis")
+    # pytest and ruff are deliberately NOT in this list. They ship in the dev group, they are
+    # how the suite is run rather than what any measurement is taken with, and the line the
+    # dependency groups draw is exactly that one.
     offenders: list[str] = []
     for path in sorted((REPO / "tests").glob("test_*.py")):
         for line in path.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
             if not (stripped.startswith("import ") or stripped.startswith("from ")):
                 continue
-            for package in heavy:
+            for package in MEASURED_WITH:
                 if stripped.startswith((f"import {package}", f"from {package}")):
                     offenders.append(f"{path.name}: {stripped}")
     assert offenders == [], (
         f"the offline suite imports a measuring instrument, so it is no longer the thing a "
         f"stranger gets by cloning and running pytest: {offenders}"
+    )
+
+
+def test_the_ban_list_is_the_broker_group_and_its_docstring_names_the_same_packages() -> None:
+    """A DOCSTRING EXPLAINING A DIFFERENT LIST CAME FROM A DIFFERENT REPOSITORY.
+
+    The test above bans exactly what the broker leg installs, and its docstring is where a
+    reader learns why that boundary is drawn. That docstring named four tools this repository
+    has never depended on while the list beside it held three others, and nothing noticed,
+    because a docstring is not executed and a reader who spots the mismatch has already decided
+    what the test directory is worth.
+
+    Both halves are asserted: that the banned list is the dependency group it claims to be, so a
+    package added to the group cannot be imported into the offline suite unnoticed, and that the
+    prose beside it names those same packages.
+    """
+    groups = pyproject()["dependency-groups"]
+    assert isinstance(groups, dict)
+    assert MEASURED_WITH, "nothing is banned from the offline suite, so the boundary is not drawn"
+
+    declared = tuple(
+        sorted(
+            re.split(r"[<>=\[;]", entry)[0].strip().replace("-", "_") for entry in groups["broker"]
+        )
+    )
+    assert declared == tuple(sorted(MEASURED_WITH)), (
+        f"the broker group installs {declared} and the offline suite bans {MEASURED_WITH}. One "
+        f"of them can now be imported into the suite a stranger gets by cloning and running "
+        f"pytest, or the ban names a package nothing installs"
+    )
+
+    explanation = test_the_offline_suite_imports_nothing_from_the_verdict_or_contract_groups.__doc__
+    assert explanation
+    unnamed = [package for package in MEASURED_WITH if package not in explanation]
+    assert unnamed == [], (
+        f"the docstring explaining the ban list never mentions {unnamed}, so it is describing "
+        f"some other repository's dependencies to a reader of this one"
     )
 
 
@@ -187,7 +233,7 @@ def test_every_untyped_third_party_module_is_named_at_both_levels() -> None:
         for path in (REPO / directory).rglob("*.py"):
             for line in path.read_text(encoding="utf-8").splitlines():
                 stripped = line.strip()
-                for package in ("redis", "psycopg", "confluent_kafka"):
+                for package in MEASURED_WITH:
                     if stripped.startswith((f"import {package}", f"from {package}")):
                         imported.add(package)
 

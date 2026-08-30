@@ -1,17 +1,21 @@
 2025 events, recorded from a real public feed, in offset order.
 
   the sequence is monotone with 0 gaps
-  the wall clock goes BACKWARDS 547 times, by up to 26 seconds
+  the Unix second in payload.timestamp goes BACKWARDS 547 times,
+  by up to 26 seconds. The ISO instant in meta.dt goes backwards
+  13 times, by up to 0.012 seconds.
 
-  offset 6463284365 says 1787992234
-  offset 6463284366 says 1787992208, which is 26 seconds earlier
+  offset 6463284365 says 1787992234 and 2026-08-29T08:30:35.458Z
+  offset 6463284366 says 1787992208 and 2026-08-29T08:30:35.473Z
+  so the Unix second went back 26 seconds there while the ISO instant
+  went FORWARD 0.015 seconds. They disagree about the direction too.
 
   A gap detector built on time reports gaps that are not there and misses the
   ones that are. Every rule here asserts on the sequence and none looks at a clock.
 
-Each event also carries two clocks, and they disagree on 1576 of 2025:
-  the ISO instant sits between 0.036s and 27.5s after the other,
-  and never before it.
+The two also disagree about size, on 1576 of 2025 events:
+  the ISO instant sits between 0.036s and 27.5s after the
+  Unix second, and never before it.
 
 Now the same session with four failures injected, 2035 events:
 

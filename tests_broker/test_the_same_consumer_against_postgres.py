@@ -24,6 +24,8 @@ from queuez import consumer, session, tape
 
 DSN = os.environ.get("QUEUEZ_POSTGRES", "postgresql://postgres@127.0.0.1:5432/postgres")
 TOPIC = "eqiad.mediawiki.recentchange"
+#: The offset space is the topic AND the partition, and every row of the committed session is 0.
+PARTITION = 0
 
 
 class Shim:
@@ -114,15 +116,21 @@ def test_a_failure_between_the_two_writes_rolls_both_back_here_too(
 def test_resuming_from_the_sink_does_not_double_count_against_postgres(
     sink: Shim, recorded: list[session.Event]
 ) -> None:
-    """A replay from behind the stored offset, which is what a broker does after a crash."""
+    """A replay from the stored offset, which is what a broker does after a crash.
+
+    NO REWIND. This subtracted a hundred from the pointer, and a magic number in a test is a
+    guarantee nobody can state: it was covering for a pointer that pointed too far forward.
+    The pointer is the last offset with a complete run behind it now, so resuming at it is
+    already conservative, and what it replays is ignored rather than counted twice.
+    """
     built, _ = tape.build(recorded)
 
     consumer.consume(sink, built, stop_after=700)
-    resume_from = consumer.stored_offset(sink, TOPIC)
+    resume_from = consumer.stored_offset(sink, TOPIC, PARTITION)
     assert resume_from is not None
     partial = total(sink)
 
-    replayed = [event for event in built if event.offset > resume_from - 100]
+    replayed = [event for event in built if event.offset > resume_from]
     consumer.consume(sink, replayed)
     after_replay = total(sink)
 
