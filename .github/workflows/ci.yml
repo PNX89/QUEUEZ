@@ -170,7 +170,17 @@ jobs:
     name: the demo a reader can run with nothing installed
     runs-on: ubuntu-latest
     steps:
+      # TAGS ARE FETCHED HERE BECAUSE THIS JOB REGENERATES THE EVIDENCE. `capture_evidence.py`
+      # reads the release from `git tag`, and a default checkout has no tags, so it wrote
+      # "v0.1.0 (untagged)" on the runner and the card check then reported a card that had not
+      # moved as out of date. The check was right and the runner was missing the input.
+      #
+      # A check that passes locally and fails in CI on state the runner does not have is worse
+      # than no check, because the first response to it is to delete it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-tags: true
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
