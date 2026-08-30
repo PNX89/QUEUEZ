@@ -26,6 +26,7 @@ import pathlib
 import sys
 import threading
 import time
+from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "evidence" / "cache"
@@ -35,6 +36,21 @@ HOT_KEY = "quote:the-one-everybody-wants"
 CALLERS = 24
 #: How long the expensive thing takes. Long enough that concurrent callers genuinely overlap.
 COMPUTE_SECONDS = 0.25
+
+
+def take_the_lease(client: Any, key: str, ttl: int = 30) -> bool:
+    """ONE WINNER, DECIDED BY THE STORE, IN ONE ROUND TRIP.
+
+    `set(nx=True)` is atomic, so exactly one caller gets the lease and the rest wait for the
+    value rather than recomputing it. This never calls `get` on the lease key first: a check
+    followed by a set races, because two callers can both see the key missing before either
+    writes it, and the race is the whole failure this function exists to prevent.
+
+    Typed `Any` rather than the Redis client class, because importing `redis` here would put it
+    on the offline suite's import graph and this module is imported by tests that never install
+    the broker group.
+    """
+    return bool(client.set(f"lease:{key}", b"1", nx=True, ex=ttl))
 
 
 def main() -> int:
@@ -61,10 +77,7 @@ def main() -> int:
     def with_single_flight() -> None:
         if client.get(HOT_KEY) is not None:
             return
-        # ONE WINNER, DECIDED BY THE STORE. `set(nx=True)` is atomic, so exactly one caller gets
-        # the lease and the rest wait for the value rather than recomputing it. Doing this with
-        # a check and then a set would race, which is the bug this is preventing.
-        if client.set(f"lease:{HOT_KEY}", b"1", nx=True, ex=30):
+        if take_the_lease(client, HOT_KEY):
             value = expensive()
             with lock:
                 computed["with"] += 1
